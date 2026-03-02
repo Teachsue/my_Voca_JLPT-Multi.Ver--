@@ -3,6 +3,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'dart:math';
 import '../model/word.dart';
 import '../service/database_service.dart';
+import '../service/supabase_service.dart';
 
 enum QuizType { kanjiToMeaning, meaningToKanji, meaningToKana }
 
@@ -218,6 +219,10 @@ class StudyViewModel extends ChangeNotifier {
       _resetSRSStage(currentWord!);
     }
     currentWord!.save();
+    
+    // Supabase에 데이터 동기화
+    SupabaseService.upsertWordProgress(currentWord!);
+
     _updateDailyStudyCount();
     _saveCurrentSession();
     notifyListeners();

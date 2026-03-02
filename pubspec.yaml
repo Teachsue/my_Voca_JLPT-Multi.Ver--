@@ -42,6 +42,9 @@ dependencies:
   google_fonts: ^8.0.2
   fl_chart: ^1.1.1
   signature: ^6.3.0
+  supabase_flutter: ^2.8.1
+  google_sign_in: ^6.2.1
+  flutter_dotenv: ^5.2.1
 
 dev_dependencies:
   flutter_test:
@@ -68,6 +71,7 @@ flutter:
   uses-material-design: true
 
   assets:
+    - .env
     - assets/icon.png
     - assets/data/n1.json
     - assets/data/n2.json

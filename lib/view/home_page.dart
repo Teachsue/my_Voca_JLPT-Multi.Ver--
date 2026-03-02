@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../view_model/study_view_model.dart';
 import '../service/database_service.dart';
+import '../service/supabase_service.dart';
 import 'level_summary_page.dart';
 import 'bookmark_page.dart';
 import 'wrong_answer_page.dart';
@@ -23,8 +24,26 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  String _nickname = '냥냥이';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserProfile();
+  }
+
+  Future<void> _loadUserProfile() async {
+    final profile = await SupabaseService.getUserProfile();
+    if (profile != null && mounted) {
+      setState(() {
+        _nickname = profile['nickname'] ?? '냥냥이';
+      });
+    }
+  }
+
   void _refresh() {
     if (mounted) setState(() {});
+    _loadUserProfile();
   }
 
   // 테마에 따른 포인트 색상 결정
@@ -129,15 +148,15 @@ class _HomePageState extends State<HomePage> {
                             Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Text(
-                                  'JLPT 단어 마스터',
-                                  style: TextStyle(
+                                Text(
+                                  '반가워요, $_nickname님!',
+                                  style: const TextStyle(
                                     fontSize: 22,
                                     fontWeight: FontWeight.bold,
                                   ),
                                 ),
                                 Text(
-                                  '매일매일 꾸준히 학습해요!',
+                                  '매일매일 꾸준히 학습해요! 🐾',
                                   style: TextStyle(
                                     fontSize: 12,
                                     color: subTextColor,

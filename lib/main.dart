@@ -3,12 +3,29 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'view/home_page.dart';
 import 'service/database_service.dart';
+import 'service/supabase_service.dart';
 import 'view/seasonal_background.dart';
+
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // .env 파일 로드
+  await dotenv.load(fileName: ".env");
+  
+  // Supabase 초기화 (환경 변수 사용)
+  await Supabase.initialize(
+    url: dotenv.get('SUPABASE_URL'),
+    anonKey: dotenv.get('SUPABASE_ANON_KEY'),
+  );
+  
+  // 익명 로그인 수행 (유저 학습 데이터 저장을 위해)
+  await SupabaseService.signInAnonymously();
+
   await DatabaseService.init();
   await initializeDateFormatting('ko_KR', null);
 

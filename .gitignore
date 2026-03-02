@@ -57,3 +57,6 @@ assets/data/katakana.json
 assets/data/n*.json
 JLPT_요구사항명세서.docx
 개발 원칙.txt
+
+# Environment variables
+.env

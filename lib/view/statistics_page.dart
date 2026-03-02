@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../model/word.dart';
 import '../service/database_service.dart';
+import '../service/supabase_service.dart';
 
 class StatisticsPage extends StatefulWidget {
   const StatisticsPage({super.key});
@@ -11,12 +12,75 @@ class StatisticsPage extends StatefulWidget {
 }
 
 class _StatisticsPageState extends State<StatisticsPage> {
+  String _nickname = '새로운 냥이';
+  bool _isLoadingProfile = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserProfile();
+  }
+
+  Future<void> _loadUserProfile() async {
+    // 이미 닉네임이 로컬에 있으면(기본값 등) 굳이 로딩 중임을 표시하지 않음
+    final profile = await SupabaseService.getUserProfile();
+    if (profile != null && mounted) {
+      setState(() {
+        _nickname = profile['nickname'] ?? '새로운 냥이';
+      });
+    }
+  }
+
+  void _showEditNicknameDialog(bool isDarkMode, Color textColor) {
+    final controller = TextEditingController(text: _nickname);
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: isDarkMode ? const Color(0xFF2D3436) : Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: Text('닉네임 수정', style: TextStyle(fontWeight: FontWeight.bold, color: textColor)),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          style: TextStyle(color: textColor),
+          decoration: InputDecoration(
+            hintText: "새로운 닉네임을 입력하세요",
+            hintStyle: TextStyle(color: isDarkMode ? Colors.white38 : Colors.grey),
+            counterText: "",
+          ),
+          maxLength: 10,
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('취소', style: TextStyle(color: Colors.grey))),
+          ElevatedButton(
+            onPressed: () async {
+              final newName = controller.text.trim();
+              if (newName.isNotEmpty) {
+                final success = await SupabaseService.updateNickname(newName);
+                if (success && mounted) {
+                  setState(() => _nickname = newName);
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("닉네임이 변경되었습니다.")));
+                }
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF5B86E5),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            child: const Text('저장'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final sessionBox = Hive.box(DatabaseService.sessionBoxName);
     final wordsBox = Hive.box<Word>(DatabaseService.boxName);
 
-    // 두 개의 박스 리스너를 중첩하여 모든 변화에 대응
     return ValueListenableBuilder(
       valueListenable: sessionBox.listenable(keys: ['dark_mode', 'app_theme', 'recommended_level']),
       builder: (context, sBox, _) {
@@ -29,7 +93,6 @@ class _StatisticsPageState extends State<StatisticsPage> {
             final Color subTextColor = isDarkMode ? Colors.grey[400]! : Colors.grey[600]!;
             final Color cardColor = isDarkMode ? Colors.white.withOpacity(0.1) : Colors.white;
 
-            // 실시간 통계 계산 (ValueListenableBuilder 내부에서 수행하여 즉시 반영)
             final today = DateTime.now().toString().split(' ')[0];
             final isGoalAchieved = sBox.get('todays_words_completed_$today', defaultValue: false);
 
@@ -55,6 +118,69 @@ class _StatisticsPageState extends State<StatisticsPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // --- 프로필 관리 섹션 ---
+                      _buildSectionTitle('프로필 관리', textColor),
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                        decoration: BoxDecoration(
+                          color: cardColor,
+                          borderRadius: BorderRadius.circular(20),
+                          boxShadow: isDarkMode ? [] : [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 10, offset: const Offset(0, 4))],
+                        ),
+                        child: Row(
+                          children: [
+                            Stack(
+                              children: [
+                                CircleAvatar(
+                                  radius: 25,
+                                  backgroundColor: const Color(0xFF5B86E5).withOpacity(0.1),
+                                  child: Icon(
+                                    SupabaseService.isGoogleLinked ? Icons.person_rounded : Icons.person_outline_rounded, 
+                                    color: const Color(0xFF5B86E5), 
+                                    size: 30
+                                  ),
+                                ),
+                                if (SupabaseService.isGoogleLinked)
+                                  Positioned(
+                                    right: 0,
+                                    bottom: 0,
+                                    child: Container(
+                                      padding: const EdgeInsets.all(2),
+                                      decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+                                      child: Image.network(
+                                        'https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/Google_%22G%22_logo.svg/1200px-Google_%22G%22_logo.svg.png',
+                                        height: 14,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(_isLoadingProfile ? '로딩 중...' : _nickname, 
+                                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: textColor)),
+                                  if (SupabaseService.isGoogleLinked)
+                                    Text(SupabaseService.userEmail ?? '구글 계정 연동됨', 
+                                      style: TextStyle(fontSize: 11, color: const Color(0xFF5B86E5), fontWeight: FontWeight.w500))
+                                  else
+                                    Text('로그인하여 데이터를 보호하세요 🐾', 
+                                      style: TextStyle(fontSize: 11, color: subTextColor)),
+                                ],
+                              ),
+                            ),
+                            IconButton(
+                              onPressed: () => _showEditNicknameDialog(isDarkMode, textColor),
+                              icon: const Icon(Icons.edit_outlined, color: Color(0xFF5B86E5), size: 22),
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      const SizedBox(height: 32),
                       _buildSectionTitle('나의 학습 현황', textColor),
                       const SizedBox(height: 12),
                       Container(
@@ -177,6 +303,34 @@ class _StatisticsPageState extends State<StatisticsPage> {
                       const SizedBox(height: 32),
                       _buildSectionTitle('데이터 관리', textColor),
                       const SizedBox(height: 12),
+                      
+                      // --- 구글 계정 연동 버튼 ---
+                      _buildManagementCard(
+                        context,
+                        title: SupabaseService.isAnonymous ? '구글 계정 연동하기' : '구글 연동 해제 (로그아웃)',
+                        subtitle: SupabaseService.isAnonymous 
+                          ? '학습 데이터를 서버에 안전하게 보관' 
+                          : '현재 구글 계정에서 로그아웃합니다.',
+                        icon: Icons.account_circle_rounded,
+                        color: SupabaseService.isAnonymous ? const Color(0xFF5B86E5) : Colors.orange,
+                        isDarkMode: isDarkMode,
+                        onTap: () async {
+                          if (SupabaseService.isAnonymous) {
+                            final success = await SupabaseService.linkWithGoogle();
+                            if (success) {
+                              _loadUserProfile();
+                              if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("구글 계정과 연동되었습니다! 🎉")));
+                            }
+                          } else {
+                            _showResetDialog(context, '로그아웃', '정말 로그아웃 하시겠습니까? 데이터는 서버에 보관됩니다.', () async {
+                              await SupabaseService.signOut();
+                              _loadUserProfile();
+                            });
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 12),
+
                       _buildManagementCard(
                         context,
                         title: '레벨 테스트 초기화',
@@ -196,7 +350,6 @@ class _StatisticsPageState extends State<StatisticsPage> {
                         color: Colors.redAccent,
                         isDarkMode: isDarkMode,
                         onTap: () => _showResetDialog(context, '모든 학습 기록 초기화', '추천 레벨을 포함한 모든 학습 데이터가 영구적으로 삭제됩니다. 계속하시겠습니까?', () async {
-                          // 1. 단어장 데이터 초기화 (대량 변경 시 putAll 사용 권장)
                           Map<dynamic, Word> updatedWords = {};
                           for (var entry in wBox.toMap().entries) {
                             final word = entry.value;
@@ -210,7 +363,6 @@ class _StatisticsPageState extends State<StatisticsPage> {
                           }
                           await wBox.putAll(updatedWords);
                           
-                          // 2. 세션 데이터 초기화 (추천 레벨 등 포함)
                           String currentThemeSetting = sBox.get('app_theme', defaultValue: 'auto');
                           bool currentDarkMode = sBox.get('dark_mode', defaultValue: false);
                           await sBox.clear(); 
