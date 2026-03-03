@@ -38,10 +38,9 @@ void main() async {
     // --- 비동기 백그라운드 작업 (앱 실행 후 조용히 진행) ---
     Future.microtask(() async {
       try {
-        // 1. 익명 로그인 (서버 통신 필요)
-        await SupabaseService.signInAnonymously();
+        // [수정] 익명 로그인을 제거하여 비로그인 유저는 서버에 접속하지 않음
         
-        // 2. 로컬 데이터 로딩 (최초 실행 시에만 작동)
+        // 1. 로컬 데이터 로딩 (최초 실행 시에만 작동)
         for (int i = 1; i <= 5; i++) {
           await DatabaseService.loadJsonToHive(i);
         }
