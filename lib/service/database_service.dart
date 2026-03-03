@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../model/word.dart';
+import 'supabase_service.dart';
 
 class DatabaseService {
   static const String boxName = 'wordsBox';
@@ -19,6 +20,73 @@ class DatabaseService {
     // 구버전 데이터 보정: 'N5 미만' 기록이 있다면 'N5'로 변경
     if (sessionBox.get('recommended_level') == 'N5 미만') {
       await sessionBox.put('recommended_level', 'N5');
+    }
+
+    // 서버와 마스터 데이터 동기화 시도 (비동기로 실행하여 앱 시작 지연 방지)
+    syncMasterData();
+  }
+
+  /// 서버와 단어 마스터 데이터 동기화
+  static Future<void> syncMasterData() async {
+    final sessionBox = Hive.box(sessionBoxName);
+    final wordsBox = Hive.box<Word>(boxName);
+
+    try {
+      // 1. 서버 설정 가져오기
+      final config = await SupabaseService.getAppConfig();
+      if (config == null) return;
+
+      final double remoteVersion = double.parse(((config['data_version'] is int) 
+          ? (config['data_version'] as int).toDouble() 
+          : (config['data_version'] as double? ?? 0.0)).toStringAsFixed(1));
+          
+      final dynamic localRawVersion = sessionBox.get('master_data_version', defaultValue: 0.0);
+      final double localVersion = double.parse(((localRawVersion is int) ? localRawVersion.toDouble() : (localRawVersion as double? ?? 0.0)).toStringAsFixed(1));
+
+      debugPrint("📡 데이터 버전 체크: 로컬($localVersion) vs 서버($remoteVersion)");
+
+      // 2. 버전이 다르면 업데이트 시작
+      if (remoteVersion > localVersion) {
+        debugPrint("🔄 새 버전 발견! 단어 동기화 시작...");
+        
+        final List<Word> remoteWords = await SupabaseService.fetchAllWords();
+        if (remoteWords.isEmpty) return;
+
+        // 3. 기존 학습 데이터 보존하며 업데이트
+        for (var remoteWord in remoteWords) {
+          // DatabaseService에서 사용하는 키 형식: '${level}_${id}'
+          final String key = '${remoteWord.level}_${remoteWord.id}';
+          final localWord = wordsBox.get(key);
+          
+          if (localWord != null) {
+            // 이미 있는 단어라면 마스터 정보만 업데이트 (학습 기록 유지)
+            final updatedWord = Word(
+              id: remoteWord.id,
+              kanji: remoteWord.kanji,
+              kana: remoteWord.kana,
+              koreanPronunciation: remoteWord.koreanPronunciation,
+              meaning: remoteWord.meaning,
+              level: remoteWord.level,
+              isBookmarked: localWord.isBookmarked,
+              correctCount: localWord.correctCount,
+              incorrectCount: localWord.incorrectCount,
+              isMemorized: localWord.isMemorized,
+              srsStage: localWord.srsStage,
+              nextReviewDate: localWord.nextReviewDate,
+            );
+            await wordsBox.put(key, updatedWord);
+          } else {
+            // 새 단어라면 추가 (새 단어의 키 생성)
+            await wordsBox.put(key, remoteWord);
+          }
+        }
+
+        // 4. 로컬 버전 갱신
+        await sessionBox.put('master_data_version', remoteVersion);
+        debugPrint("✅ 단어 동기화 완료 (버전 $remoteVersion)");
+      }
+    } catch (e) {
+      debugPrint("❌ 동기화 중 오류 발생: $e");
     }
   }
 

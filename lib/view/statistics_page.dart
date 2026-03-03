@@ -11,18 +11,54 @@ class StatisticsPage extends StatefulWidget {
   State<StatisticsPage> createState() => _StatisticsPageState();
 }
 
-class _StatisticsPageState extends State<StatisticsPage> {
+class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObserver {
   String _nickname = '새로운 냥이';
   bool _isLoadingProfile = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadUserProfile();
   }
 
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 브라우저 연동 후 앱으로 돌아왔을 때(Resumed) 상태 체크
+    if (state == AppLifecycleState.resumed) {
+      _checkLinkingResult();
+    }
+  }
+
+  Future<void> _checkLinkingResult() async {
+    // 약간의 딜레이를 주어 SDK가 딥링크를 처리할 시간을 줌
+    await Future.delayed(const Duration(milliseconds: 500));
+    await SupabaseService.refreshUser();
+    
+    if (mounted) {
+      if (SupabaseService.isGoogleLinked) {
+        _loadUserProfile();
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("구글 계정과 연동되었습니다! 🎉")));
+      } else {
+        // 연동되지 않았는데 에러가 로그에 찍혔던 상황이라면 팝업 표시
+        // SDK 내부 에러를 직접 잡기 어려우므로, 연동 시도 후에도 identities가 비어있으면 팝업 시도
+        if (SupabaseService.isAnonymous) {
+          _showLinkErrorDialog(context, Theme.of(context).brightness == Brightness.dark);
+        }
+      }
+    }
+  }
+
   Future<void> _loadUserProfile() async {
-    // 이미 닉네임이 로컬에 있으면(기본값 등) 굳이 로딩 중임을 표시하지 않음
+    // 서버에서 최신 유저 정보(identities 등)를 강제로 가져옴
+    await SupabaseService.refreshUser();
+    
     final profile = await SupabaseService.getUserProfile();
     if (profile != null && mounted) {
       setState(() {
@@ -56,11 +92,13 @@ class _StatisticsPageState extends State<StatisticsPage> {
             onPressed: () async {
               final newName = controller.text.trim();
               if (newName.isNotEmpty) {
-                final success = await SupabaseService.updateNickname(newName);
-                if (success && mounted) {
+                final errorMsg = await SupabaseService.updateNickname(newName);
+                if (errorMsg == null && mounted) {
                   setState(() => _nickname = newName);
                   Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("닉네임이 변경되었습니다.")));
+                } else if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(errorMsg!)));
                 }
               }
             },
@@ -316,11 +354,9 @@ class _StatisticsPageState extends State<StatisticsPage> {
                         isDarkMode: isDarkMode,
                         onTap: () async {
                           if (SupabaseService.isAnonymous) {
-                            final success = await SupabaseService.linkWithGoogle();
-                            if (success) {
-                              _loadUserProfile();
-                              if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("구글 계정과 연동되었습니다! 🎉")));
-                            }
+                            // 연동 시도 (브라우저 열림)
+                            await SupabaseService.linkWithGoogle();
+                            // 결과는 didChangeAppLifecycleState에서 처리됨
                           } else {
                             _showResetDialog(context, '로그아웃', '정말 로그아웃 하시겠습니까? 데이터는 서버에 보관됩니다.', () async {
                               await SupabaseService.signOut();
@@ -463,6 +499,34 @@ class _StatisticsPageState extends State<StatisticsPage> {
               ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$title 완료되었습니다.')));
             },
             child: const Text('확인', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showLinkErrorDialog(BuildContext context, bool isDarkMode) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: isDarkMode ? const Color(0xFF2D3436) : Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Text('연동 실패', style: TextStyle(fontWeight: FontWeight.bold)),
+        content: const Text('해당 구글 계정은 이미 다른 유저와 연동되어 있습니다.\n해당 계정으로 로그인하시겠습니까?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('취소', style: TextStyle(color: Colors.grey))),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              await SupabaseService.signInWithGoogle();
+              // 로그인 성공 여부는 main.dart의 AuthStateChangeListener나 refreshUser로 감지됨
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF5B86E5),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            child: const Text('로그인하기'),
           ),
         ],
       ),

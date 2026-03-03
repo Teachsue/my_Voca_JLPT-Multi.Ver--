@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'dart:convert';
 import 'package:intl/intl.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../view_model/study_view_model.dart';
@@ -44,6 +45,57 @@ class _HomePageState extends State<HomePage> {
   void _refresh() {
     if (mounted) setState(() {});
     _loadUserProfile();
+  }
+
+  Future<void> _migrateData() async {
+    if (!mounted) return;
+    
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      final List<String> files = [
+        'hiragana.json',
+        'katakana.json',
+        'n1.json',
+        'n2.json',
+        'n3.json',
+        'n4.json',
+        'n5.json',
+      ];
+      List<Word> allWords = [];
+
+      for (String file in files) {
+        final String content = await rootBundle.loadString('assets/data/$file');
+        final Map<String, dynamic> data = json.decode(content);
+        final List<dynamic> vocabList = data['vocabulary'];
+        
+        for (var item in vocabList) {
+          allWords.add(Word.fromJson(item));
+        }
+        debugPrint("📦 $file 로드 완료 (${vocabList.length}개)");
+      }
+
+      await SupabaseService.bulkUpsertWords(allWords);
+      
+      if (mounted) {
+        Navigator.pop(context); // 로딩 닫기
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('✨ ${allWords.length}개 단어 마이그레이션 성공!')),
+        );
+      }
+    } catch (e) {
+      debugPrint("❌ 마이그레이션 실패: $e");
+      if (mounted) {
+        Navigator.pop(context); // 로딩 닫기
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('❌ 실패: $e')),
+        );
+      }
+    }
   }
 
   // 테마에 따른 포인트 색상 결정
@@ -134,6 +186,87 @@ class _HomePageState extends State<HomePage> {
             appTheme: appTheme,
             child: Scaffold(
               backgroundColor: Colors.transparent,
+              drawer: SupabaseService.isAdmin
+                  ? Drawer(
+                      child: ListView(
+                        padding: EdgeInsets.zero,
+                        children: [
+                          DrawerHeader(
+                            decoration: BoxDecoration(color: pointColor),
+                            child: const Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                Icon(Icons.admin_panel_settings,
+                                    color: Colors.white, size: 40),
+                                SizedBox(height: 10),
+                                Text(
+                                  '관리자 메뉴',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          ListTile(
+                            leading: const Icon(Icons.cloud_upload_rounded,
+                                color: Colors.blue),
+                            title: const Text('단어 마이그레이션'),
+                            subtitle: const Text('로컬 JSON을 Supabase로 업로드합니다.'),
+                            onTap: () {
+                              Navigator.pop(context); // Drawer 닫기
+                              _migrateData();
+                            },
+                          ),
+                          ListTile(
+                            leading: const Icon(Icons.sync_problem_rounded,
+                                color: Colors.orange),
+                            title: const Text('동기화 테스트'),
+                            subtitle: const Text('서버 데이터를 수정하고 버전을 올립니다.'),
+                            onTap: () async {
+                              Navigator.pop(context);
+                              // 1. 1번 단어 수정
+                              final success = await SupabaseService.updateWordMeaning(1, "수정 테스트 완료! 🐾 (서버에서 옴)");
+                              if (success) {
+                                // 2. 버전 업
+                                final newVer = await SupabaseService.incrementDataVersion();
+                                if (newVer != null && mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(content: Text('🚀 서버 데이터 수정 및 버전 업($newVer) 완료! 앱을 재시작하세요.')),
+                                  );
+                                }
+                              }
+                            },
+                          ),
+                          ListTile(
+                            leading: const Icon(Icons.restart_alt_rounded,
+                                color: Colors.red),
+                            title: const Text('로컬 버전 초기화'),
+                            subtitle: const Text('내 폰의 버전을 0.0으로 리셋합니다.'),
+                            onTap: () async {
+                              Navigator.pop(context);
+                              final sessionBox = Hive.box(DatabaseService.sessionBoxName);
+                              await sessionBox.put('master_data_version', 0.0);
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('🧹 로컬 버전이 0.0으로 초기화되었습니다. 앱을 재시작하면 서버(1.0)와 동기화됩니다.')),
+                                );
+                              }
+                            },
+                          ),
+                          const Divider(),
+                          const ListTile(
+                            leading: Icon(Icons.info_outline),
+                            title: Text('앱 버전'),
+                            subtitle: Text('1.0.0'),
+                          ),
+                        ],
+                      ),
+                    )
+                  : null,
               body: SafeArea(
                 child: SingleChildScrollView(
                   physics: const NeverScrollableScrollPhysics(),
@@ -145,26 +278,48 @@ class _HomePageState extends State<HomePage> {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  '반가워요, $_nickname님!',
-                                  style: const TextStyle(
-                                    fontSize: 22,
-                                    fontWeight: FontWeight.bold,
+                            Expanded(
+                              child: Row(
+                                children: [
+                                  if (SupabaseService.isAdmin)
+                                    Builder(
+                                      builder: (context) => _buildHeaderIcon(
+                                        Icons.menu_rounded,
+                                        () => Scaffold.of(context).openDrawer(),
+                                        isDarkMode,
+                                      ),
+                                    ),
+                                  if (SupabaseService.isAdmin)
+                                    const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          '반가워요, $_nickname님!',
+                                          style: const TextStyle(
+                                            fontSize: 22,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        Text(
+                                          '매일매일 꾸준히 학습해요! 🐾',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: subTextColor,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ],
+                                    ),
                                   ),
-                                ),
-                                Text(
-                                  '매일매일 꾸준히 학습해요! 🐾',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: subTextColor,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
+                            const SizedBox(width: 8),
                             Row(
                               children: [
                                 _buildHeaderIcon(
