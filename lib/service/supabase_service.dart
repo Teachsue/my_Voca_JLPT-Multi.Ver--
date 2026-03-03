@@ -147,7 +147,7 @@ class SupabaseService {
       await _client.from('profiles').upsert({
         'id': currentUserId,
         'nickname': newNickname,
-        'updated_at': DateTime.now().toIso8601String(),
+        // 'updated_at' 제거 (서버 트리거가 처리)
       });
       return null; // 성공
     } catch (e) {
@@ -162,10 +162,15 @@ class SupabaseService {
   // --- 학습 데이터 관리 ---
 
   static Future<void> upsertWordProgress(Word word) async {
-    if (userId == null) return;
+    final currentUserId = userId;
+    if (currentUserId == null) {
+      debugPrint("⚠️ 로그인 정보가 없어 업로드를 건너뜁니다.");
+      return;
+    }
+
     try {
       await _client.from('user_progress').upsert({
-        'user_id': userId,
+        'user_id': currentUserId,
         'word_id': word.id,
         'level': word.level,
         'correct_count': word.correctCount,
@@ -174,10 +179,41 @@ class SupabaseService {
         'is_bookmarked': word.isBookmarked,
         'srs_stage': word.srsStage,
         'next_review_date': word.nextReviewDate?.toIso8601String(),
-        'updated_at': DateTime.now().toIso8601String(),
+        // 'updated_at' 제거 (서버 트리거가 처리)
       }, onConflict: 'user_id, word_id');
+      debugPrint("☁️ 서버 동기화 완료: ID ${word.id} (${word.kanji})");
     } catch (e) {
       debugPrint("❌ 데이터 업로드 실패: $e");
+      if (e is PostgrestException) {
+        debugPrint("   - 에러 코드: ${e.code}");
+        debugPrint("   - 에러 상세: ${e.details}");
+        debugPrint("   - 에러 메시지: ${e.message}");
+      }
+    }
+  }
+
+  /// 서버의 모든 학습 기록 삭제 (북마크 포함 완전 초기화)
+  static Future<void> clearAllProgress() async {
+    if (userId == null) return;
+    try {
+      await _client.from('user_progress').delete().eq('user_id', userId!);
+      debugPrint("🧹 서버 학습 데이터 완전 초기화 완료");
+    } catch (e) {
+      debugPrint("❌ 서버 데이터 초기화 실패: $e");
+    }
+  }
+
+  /// 서버의 오답 기록만 일괄 초기화 (오답 수만 0으로)
+  static Future<void> resetWrongAnswers() async {
+    if (userId == null) return;
+    try {
+      await _client.from('user_progress')
+          .update({'incorrect_count': 0})
+          .eq('user_id', userId!)
+          .gt('incorrect_count', 0); // 오답이 있는 것들만 골라서 0으로
+      debugPrint("🧹 서버 오답 기록 일괄 초기화 완료");
+    } catch (e) {
+      debugPrint("❌ 서버 오답 기록 초기화 실패: $e");
     }
   }
 
@@ -210,38 +246,6 @@ class SupabaseService {
     } catch (e) {
       debugPrint("❌ 서버 단어 로드 실패: $e");
       return [];
-    }
-  }
-
-  // --- 테스트 및 운영용 (Admin 전용) ---
-
-  /// 서버의 데이터 버전을 강제로 0.1 올리기
-  static Future<double?> incrementDataVersion() async {
-    try {
-      final config = await getAppConfig();
-      if (config == null) return null;
-      
-      // num 타입으로 받으면 int, double 모두 안전하게 처리 가능
-      final num currentVersion = config['data_version'] ?? 0.0;
-      // 소수점 첫째 자리까지 깔끔하게 반올림하여 계산
-      final double newVersion = double.parse((currentVersion.toDouble() + 0.1).toStringAsFixed(1));
-      
-      await _client.from('app_config').update({'data_version': newVersion}).eq('id', 1);
-      return newVersion;
-    } catch (e) {
-      debugPrint("❌ 버전 올리기 실패: $e");
-      return null;
-    }
-  }
-
-  /// 특정 단어의 뜻을 강제로 수정하기 (테스트용)
-  static Future<bool> updateWordMeaning(int id, String newMeaning) async {
-    try {
-      await _client.from('words').update({'meaning': newMeaning}).eq('id', id);
-      return true;
-    } catch (e) {
-      debugPrint("❌ 단어 수정 실패: $e");
-      return false;
     }
   }
 

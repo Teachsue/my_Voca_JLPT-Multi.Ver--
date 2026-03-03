@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../model/word.dart';
 import '../service/database_service.dart';
+import '../service/supabase_service.dart';
 import 'quiz_page.dart';
 
 class WrongAnswerPage extends StatelessWidget {
@@ -111,7 +112,12 @@ class WrongAnswerPage extends StatelessWidget {
                               ),
                               IconButton(
                                 icon: Icon(Icons.delete_outline_rounded, color: isDarkMode ? Colors.white24 : Colors.red[200], size: 22),
-                                onPressed: () { word.incorrectCount = 0; word.save(); },
+                                onPressed: () async { 
+                                  word.incorrectCount = 0; 
+                                  await word.save(); 
+                                  // 서버와 실시간 동기화
+                                  await SupabaseService.upsertWordProgress(word);
+                                },
                                 constraints: const BoxConstraints(),
                                 padding: const EdgeInsets.only(top: 4),
                               ),
@@ -172,12 +178,20 @@ class WrongAnswerPage extends StatelessWidget {
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('취소')),
           TextButton(
-            onPressed: () {
+            onPressed: () async {
               final box = Hive.box<Word>(DatabaseService.boxName);
-              for (var word in box.values) {
-                if (word.incorrectCount > 0) { word.incorrectCount = 0; word.save(); }
+              final wrongWords = box.values.where((w) => w.incorrectCount > 0).toList();
+              
+              // 1. 로컬 데이터 초기화 (빠르게 수행)
+              for (var word in wrongWords) {
+                word.incorrectCount = 0;
+                await word.save();
               }
-              Navigator.pop(context);
+
+              // 2. 서버 데이터 일괄 초기화 (한 번의 요청으로 끝!)
+              await SupabaseService.resetWrongAnswers();
+
+              if (context.mounted) Navigator.pop(context);
             },
             child: const Text('초기화', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
           ),

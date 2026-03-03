@@ -3,6 +3,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart';
 import '../model/word.dart';
 import '../service/database_service.dart';
+import '../service/supabase_service.dart';
 import 'quiz_page.dart';
 
 class WordListPage extends StatefulWidget {
@@ -207,8 +208,21 @@ class _WordListPageState extends State<WordListPage> {
                 ),
               ),
               IconButton(
-                icon: Icon(word.isBookmarked ? Icons.star_rounded : Icons.star_border_rounded, color: word.isBookmarked ? Colors.amber : (isDarkMode ? Colors.white24 : Colors.grey[300])),
-                onPressed: () { setStateItem(() { word.isBookmarked = !word.isBookmarked; word.save(); }); },
+                icon: Icon(
+                    word.isBookmarked
+                        ? Icons.star_rounded
+                        : Icons.star_border_rounded,
+                    color: word.isBookmarked
+                        ? Colors.amber
+                        : (isDarkMode ? Colors.white24 : Colors.grey[300])),
+                onPressed: () async {
+                  setStateItem(() {
+                    word.isBookmarked = !word.isBookmarked;
+                    word.save();
+                  });
+                  // 서버와 실시간 동기화
+                  await SupabaseService.upsertWordProgress(word);
+                },
               ),
             ],
           ),

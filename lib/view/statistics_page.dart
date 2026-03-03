@@ -386,6 +386,15 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
                         color: Colors.redAccent,
                         isDarkMode: isDarkMode,
                         onTap: () => _showResetDialog(context, '모든 학습 기록 초기화', '추천 레벨을 포함한 모든 학습 데이터가 영구적으로 삭제됩니다. 계속하시겠습니까?', () async {
+                          debugPrint("🧹 전체 초기화 시작...");
+                          
+                          // 1. 서버 데이터 삭제 (명시적으로 기다림)
+                          await SupabaseService.clearAllProgress();
+
+                          // 2. 로컬 데이터 초기화
+                          final wBox = Hive.box<Word>(DatabaseService.boxName);
+                          final sBox = Hive.box(DatabaseService.sessionBoxName);
+                          
                           Map<dynamic, Word> updatedWords = {};
                           for (var entry in wBox.toMap().entries) {
                             final word = entry.value;
@@ -401,9 +410,14 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
                           
                           String currentThemeSetting = sBox.get('app_theme', defaultValue: 'auto');
                           bool currentDarkMode = sBox.get('dark_mode', defaultValue: false);
+                          double currentDataVer = sBox.get('master_data_version', defaultValue: 1.0);
+                          
                           await sBox.clear(); 
                           await sBox.put('app_theme', currentThemeSetting);
                           await sBox.put('dark_mode', currentDarkMode);
+                          await sBox.put('master_data_version', currentDataVer); // 데이터 버전은 유지
+                          
+                          debugPrint("✅ 로컬 및 서버 초기화 완료");
                         }),
                       ),
                       const SizedBox(height: 32),

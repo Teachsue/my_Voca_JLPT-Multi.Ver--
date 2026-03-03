@@ -222,26 +222,6 @@ class _HomePageState extends State<HomePage> {
                             },
                           ),
                           ListTile(
-                            leading: const Icon(Icons.sync_problem_rounded,
-                                color: Colors.orange),
-                            title: const Text('동기화 테스트'),
-                            subtitle: const Text('서버 데이터를 수정하고 버전을 올립니다.'),
-                            onTap: () async {
-                              Navigator.pop(context);
-                              // 1. 1번 단어 수정
-                              final success = await SupabaseService.updateWordMeaning(1, "수정 테스트 완료! 🐾 (서버에서 옴)");
-                              if (success) {
-                                // 2. 버전 업
-                                final newVer = await SupabaseService.incrementDataVersion();
-                                if (newVer != null && mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text('🚀 서버 데이터 수정 및 버전 업($newVer) 완료! 앱을 재시작하세요.')),
-                                  );
-                                }
-                              }
-                            },
-                          ),
-                          ListTile(
                             leading: const Icon(Icons.restart_alt_rounded,
                                 color: Colors.red),
                             title: const Text('로컬 버전 초기화'),

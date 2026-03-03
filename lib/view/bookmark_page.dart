@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../model/word.dart';
 import '../service/database_service.dart';
+import '../service/supabase_service.dart';
 
 class BookmarkPage extends StatelessWidget {
   const BookmarkPage({super.key});
@@ -81,9 +82,11 @@ class BookmarkPage extends StatelessWidget {
                       ),
                       IconButton(
                         icon: const Icon(Icons.star_rounded, color: Colors.amber),
-                        onPressed: () {
+                        onPressed: () async {
                           word.isBookmarked = false;
-                          word.save();
+                          await word.save();
+                          // 서버와 실시간 동기화
+                          await SupabaseService.upsertWordProgress(word);
                         },
                       ),
                     ],

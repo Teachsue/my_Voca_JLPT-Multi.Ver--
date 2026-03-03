@@ -12,45 +12,57 @@ import 'view/seasonal_background.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  
-  // .env 파일 로드
-  await dotenv.load(fileName: ".env");
-  
-  // Supabase 초기화 (환경 변수 사용)
-  await Supabase.initialize(
-    url: dotenv.get('SUPABASE_URL'),
-    anonKey: dotenv.get('SUPABASE_ANON_KEY'),
-  );
-  
-  // 익명 로그인 수행 (유저 학습 데이터 저장을 위해)
-  await SupabaseService.signInAnonymously();
+  try {
+    WidgetsFlutterBinding.ensureInitialized();
+    
+    // .env 파일 로드
+    await dotenv.load(fileName: ".env");
+    
+    // Supabase 초기화 (기본 연결만 설정, 네트워크 요청 없음)
+    await Supabase.initialize(
+      url: dotenv.get('SUPABASE_URL'),
+      anonKey: dotenv.get('SUPABASE_ANON_KEY'),
+    );
+    
+    // 필수 로컬 DB 초기화
+    await DatabaseService.init();
+    await initializeDateFormatting('ko_KR', null);
 
-  await DatabaseService.init();
-  await initializeDateFormatting('ko_KR', null);
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
 
-  await SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-    DeviceOrientation.portraitDown,
-  ]);
+    runApp(const MyApp());
 
-  runApp(const MyApp());
-
-  // 백그라운드 데이터 로딩을 에러 핸들링과 함께 실행
-  Future.microtask(() async {
-    try {
-      for (int i = 1; i <= 5; i++) {
-        await DatabaseService.loadJsonToHive(i);
+    // --- 비동기 백그라운드 작업 (앱 실행 후 조용히 진행) ---
+    Future.microtask(() async {
+      try {
+        // 1. 익명 로그인 (서버 통신 필요)
+        await SupabaseService.signInAnonymously();
+        
+        // 2. 로컬 데이터 로딩 (최초 실행 시에만 작동)
+        for (int i = 1; i <= 5; i++) {
+          await DatabaseService.loadJsonToHive(i);
+        }
+        await DatabaseService.loadJsonToHive(11);
+        await DatabaseService.loadJsonToHive(12);
+        
+        // 3. 서버와 단어 마스터 데이터 동기화
+        await DatabaseService.syncMasterData();
+      } catch (e) {
+        debugPrint("⚠️ 백그라운드 초기화 중 오류: $e");
       }
-      await DatabaseService.loadJsonToHive(11);
-      await DatabaseService.loadJsonToHive(12);
-      
-      // 로컬 로딩이 모두 끝난 후, 서버와 동기화 시도 (최신 데이터 덮어쓰기)
-      await DatabaseService.syncMasterData();
-    } catch (e) {
-      debugPrint("Data loading error: $e");
-    }
-  });
+    });
+  } catch (e) {
+    // 치명적 에러 시 앱이 죽지 않도록 최소한의 화면이라도 띄움
+    debugPrint("❌ 앱 실행 실패: $e");
+    runApp(MaterialApp(
+      home: Scaffold(
+        body: Center(child: Text("앱 실행 중 오류가 발생했습니다.\n네트워크 연결을 확인해주세요.\n\n$e")),
+      ),
+    ));
+  }
 }
 
 // 책장을 넘길 때 배경도 함께 이동시켜 잔상을 없애는 커스텀 빌더
