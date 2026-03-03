@@ -21,9 +21,6 @@ class DatabaseService {
     if (sessionBox.get('recommended_level') == 'N5 미만') {
       await sessionBox.put('recommended_level', 'N5');
     }
-
-    // 서버와 마스터 데이터 동기화 시도 (비동기로 실행하여 앱 시작 지연 방지)
-    syncMasterData();
   }
 
   /// 서버와 단어 마스터 데이터 동기화

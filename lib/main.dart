@@ -44,6 +44,9 @@ void main() async {
       }
       await DatabaseService.loadJsonToHive(11);
       await DatabaseService.loadJsonToHive(12);
+      
+      // 로컬 로딩이 모두 끝난 후, 서버와 동기화 시도 (최신 데이터 덮어쓰기)
+      await DatabaseService.syncMasterData();
     } catch (e) {
       debugPrint("Data loading error: $e");
     }

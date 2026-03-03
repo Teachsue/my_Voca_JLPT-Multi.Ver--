@@ -172,7 +172,7 @@ class _HomePageState extends State<HomePage> {
       child: ValueListenableBuilder<Box>(
         valueListenable: Hive.box(
           DatabaseService.sessionBoxName,
-        ).listenable(keys: ['app_theme']),
+        ).listenable(keys: ['app_theme', 'master_data_version']),
         builder: (context, box, _) {
           final String appTheme = box.get('app_theme', defaultValue: 'auto');
           final List<Color> bannerColors = _getBannerColors(
@@ -258,10 +258,10 @@ class _HomePageState extends State<HomePage> {
                             },
                           ),
                           const Divider(),
-                          const ListTile(
-                            leading: Icon(Icons.info_outline),
-                            title: Text('앱 버전'),
-                            subtitle: Text('1.0.0'),
+                          ListTile(
+                            leading: const Icon(Icons.info_outline),
+                            title: const Text('데이터 버전'),
+                            subtitle: Text(box.get('master_data_version', defaultValue: 1.0).toString()),
                           ),
                         ],
                       ),

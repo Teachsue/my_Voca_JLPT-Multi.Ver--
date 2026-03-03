@@ -406,7 +406,18 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
                           await sBox.put('dark_mode', currentDarkMode);
                         }),
                       ),
-                      const SizedBox(height: 40),
+                      const SizedBox(height: 32),
+                      Center(
+                        child: Text(
+                          '데이터 버전: v${sBox.get('master_data_version', defaultValue: 1.0).toString()}',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: isDarkMode ? Colors.white24 : Colors.grey.withOpacity(0.4),
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 20),
                     ],
                   ),
                 ),
