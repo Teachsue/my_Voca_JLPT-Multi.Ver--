@@ -60,3 +60,6 @@ JLPT_요구사항명세서.docx
 
 # Environment variables
 .env
+
+# Project logs
+PROGRESS.md

@@ -26,6 +26,12 @@
 *   **학습 일관성 확보**: `Random(Seed)` 기반 정렬을 통해, 단어들이 적절히 섞여 있으면서도 매번 접속 시마다 동일한 DAY 구성을 유지하도록 버그를 완벽히 해결했습니다.
 *   **한국어 발음 표기**: 모든 단어 학습 리스트에 한국어 발음을 추가하고, 긴 단어도 잘림 없이(`Wrap` 레이아웃) 표시되도록 UI를 개선했습니다.
 
+### 4. ☁️ 하이브리드 동기화 시스템 (Hybrid Sync)
+*   **데이터 마이그레이션**: 비로그인 상태의 로컬 데이터를 구글 계정 연동 시 Supabase 클라우드로 자동 이전하여 학습 데이터의 연속성을 보장합니다.
+*   **안정적인 사용자 식별(Stable ID)**: 앱 설치 시 생성되는 고유 ID(`sid`)를 활용하여 로그아웃이나 재연동 시에도 동일한 학습 기록을 유지합니다.
+*   **닉네임 보호 및 우선순위**: 사용자가 지정한 닉네임이 구글 실명보다 우선적으로 적용되며, 클라우드와 로컬 간의 데이터 정합성을 유지합니다.
+*   **강력한 보안(RLS)**: Row Level Security 정책을 적용하여 인증된 사용자만이 본인의 데이터에 안전하게 접근할 수 있도록 설계되었습니다.
+
 ---
 
 ## 🎨 테마 및 편의 기능
@@ -66,7 +72,10 @@
 
 - **Framework**: [Flutter](https://flutter.dev/) (Material 3)
 - **Language**: [Dart](https://dart.dev/)
-- **Database**: [Hive](https://pub.dev/packages/hive) (고성능 로컬 NoSQL 데이터베이스)
+- **Database**: 
+  - [Hive](https://pub.dev/packages/hive) (Local NoSQL for Offline First)
+  - [Supabase](https://supabase.com/) (Cloud Storage & Sync)
+- **Authentication**: Google Sign-In & Supabase Auth
 - **Signature**: [signature](https://pub.dev/packages/signature) (Handwriting Engine)
 - **State Management**: [Provider](https://pub.dev/packages/provider)
 - **Animations**: Custom PageTransitions & Lottie
