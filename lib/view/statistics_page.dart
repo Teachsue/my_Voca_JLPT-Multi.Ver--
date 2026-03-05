@@ -43,7 +43,8 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
         }
 
         await _loadUserProfile();
-        await SupabaseService.uploadLocalDataToCloud();
+        await SupabaseService.uploadLocalDataToCloud();    // [우선순위 1] 오프라인 변경사항 서버로 밀어넣기
+        await SupabaseService.downloadProgressFromServer(); // [우선순위 2] 서버의 나머지 데이터 가져오기
 
         if (mounted) {
           ScaffoldMessenger.of(context).hideCurrentSnackBar();

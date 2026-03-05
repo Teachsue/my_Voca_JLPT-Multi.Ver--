@@ -21,25 +21,24 @@ class SupabaseService {
 
   static String get stableId {
     final box = Hive.box(DatabaseService.sessionBoxName);
-    String? sid = box.get('stable_user_id');
-    if (sid == null) {
-      sid = const Uuid().v4();
-      box.put('stable_user_id', sid);
-    }
-    return sid;
+    return box.get('stable_user_id') ?? _generateNewSid();
+  }
+
+  static String _generateNewSid() {
+    final box = Hive.box(DatabaseService.sessionBoxName);
+    final String newSid = const Uuid().v4();
+    box.put('stable_user_id', newSid);
+    return newSid;
   }
 
   // 1. 구글 로그인
   static Future<void> signInWithGoogle() async {
     try {
       final redirectUrl = dotenv.get('REDIRECT_URL');
-      
-      // 기존 세션이 꼬이지 않도록 정리 후 로그인
       await _client.auth.signInWithOAuth(
         OAuthProvider.google,
-        // 윈도우 앱에서는 redirectTo를 명시하여 딥링크 처리가 원활하게 함
         redirectTo: kIsWeb ? null : redirectUrl,
-        authScreenLaunchMode: LaunchMode.externalApplication, // 외부 브라우저 사용 권장
+        authScreenLaunchMode: LaunchMode.platformDefault,
       );
     } catch (e) {
       debugPrint("❌ 구글 로그인 에러: $e");
@@ -60,74 +59,64 @@ class SupabaseService {
 
   static Stream<AuthState> get authStateChanges => _client.auth.onAuthStateChange;
 
-  // --- 프로필 관리 (기기 변경 시에도 닉네임 보존) ---
+  // --- 프로필 및 데이터 통합 (기기 변경 시 핵심 로직) ---
 
   static Future<Map<String, dynamic>?> getUserProfile() async {
-    final String sid = stableId;
+    String sid = stableId;
     final box = Hive.box(DatabaseService.sessionBoxName);
     final currentUser = _client.auth.currentUser;
     
-    // 1. 로컬 보관 중인 닉네임 확인
     String? localNickname = box.get('user_nickname');
     if (localNickname == null) {
       localNickname = '냥냥이${DateTime.now().millisecondsSinceEpoch % 1000}';
       await box.put('user_nickname', localNickname);
     }
 
-    // 2. 비로그인 유저: 서버 통신 없이 로컬 정보 반환
     if (!isGoogleLinked || currentUser == null) {
       _isAdmin = false;
       return {'id': sid, 'nickname': localNickname};
     }
 
     try {
-      // 3. 서버 프로필 조회 (먼저 현재 기기 ID로 조회)
-      var response = await _client.from('profiles').select().eq('id', sid).maybeSingle();
+      // [핵심 로직] 이 구글 계정(auth_id)으로 생성된 프로필들을 모두 조회
+      // maybeSingle() 대신 select()를 사용하여 여러 기기 기록이 있어도 에러 방지
+      final List<dynamic> profiles = await _client.from('profiles')
+          .select()
+          .eq('auth_id', currentUser.id)
+          .order('created_at', ascending: true); // 가장 먼저 생성된(원본) 프로필을 첫 번째로
+
+      if (profiles.isNotEmpty) {
+        // [1단계] 가장 오래된(원본) 프로필 정보 채택
+        final existingProfile = profiles.first;
+        final String serverSid = existingProfile['id'];
+        final String serverNickname = existingProfile['nickname'] ?? '구글 유저';
+
+        // [2단계] 현재 기기 ID(sid)가 원본 서버 ID(serverSid)와 다르면 강제 교체
+        if (sid != serverSid) {
+          debugPrint("🔄 기기 통합 수행: $sid -> $serverSid (원본 닉네임: $serverNickname)");
+          await box.put('stable_user_id', serverSid);
+          sid = serverSid; // 이후 로직에서 교체된 sid 사용
+        }
+
+        // 로컬 닉네임 동기화
+        if (localNickname != serverNickname) {
+          await box.put('user_nickname', serverNickname);
+        }
+
+        // 구글 메타데이터 이름 업데이트 (참고용)
+        final String gName = currentUser.userMetadata?['full_name'] ?? currentUser.userMetadata?['name'] ?? '구글 유저';
+        if (existingProfile['google_nickname'] != gName) {
+           await _client.from('profiles').update({'google_nickname': gName}).eq('id', serverSid);
+        }
+
+        _isAdmin = existingProfile['is_admin'] ?? false;
+        return {...existingProfile, 'id': serverSid, 'nickname': serverNickname};
+      }
+
+      // [3단계] 서버에 프로필이 전혀 없는 신규 유저인 경우 (최초 연동)
       final String gName = currentUser.userMetadata?['full_name'] ?? currentUser.userMetadata?['name'] ?? '구글 유저';
-
-      // [핵심] 만약 현재 기기(sid)로 프로필이 없다면, 동일한 구글 계정(auth_id)을 쓰는 다른 기기의 프로필이 있는지 확인
-      if (response == null) {
-        final existingByAuth = await _client.from('profiles')
-            .select()
-            .eq('auth_id', currentUser.id)
-            .order('created_at', ascending: false)
-            .limit(1)
-            .maybeSingle();
-            
-        if (existingByAuth != null) {
-          debugPrint("📱 기존 기기에서 사용하던 프로필 발견: ${existingByAuth['nickname']}");
-          response = existingByAuth;
-          
-          // 새 기기(sid) 정보로도 이 닉네임을 서버에 등록 (기기 간 동기화)
-          await _client.from('profiles').upsert({
-            'id': sid,
-            'nickname': existingByAuth['nickname'],
-            'auth_id': currentUser.id,
-            'google_nickname': gName,
-          }, onConflict: 'id');
-        }
-      }
-
-      if (response != null) {
-        _isAdmin = response['is_admin'] ?? false;
-        final String? serverNickname = response['nickname'];
-        
-        // 닉네임이 있다면 로컬에 즉시 동기화 (구글 이름보다 우선)
-        if (serverNickname != null && serverNickname.isNotEmpty) {
-          if (localNickname != serverNickname) {
-            await box.put('user_nickname', serverNickname);
-          }
-          // google_nickname 필드만 정보용으로 업데이트
-          if (response['google_nickname'] != gName) {
-            await _client.from('profiles').update({'google_nickname': gName}).eq('id', response['id']);
-          }
-          return {...response, 'nickname': serverNickname};
-        }
-      }
-
-      // 4. 정말로 아무런 기록이 없는 신규 유저인 경우에만 구글 이름 사용
       final String initialNickname = (localNickname != null && !localNickname.startsWith('냥냥이')) ? localNickname : gName;
-      
+
       final newProfile = {
         'id': sid,
         'nickname': initialNickname,
@@ -138,24 +127,93 @@ class SupabaseService {
       await _client.from('profiles').upsert(newProfile, onConflict: 'id');
       return newProfile;
     } catch (e) {
-      debugPrint("⚠️ 프로필 동기화 에러: $e");
+      debugPrint("⚠️ 프로필 통합 에러: $e");
       return {'id': sid, 'nickname': localNickname};
     }
   }
 
-  static Future<String?> updateNickname(String newNickname) async {
+  // --- 학습 데이터 관리 (다운로드/업로드) ---
+
+  /// 서버의 진도 데이터를 로컬로 내려받기 (기기 변경 시 복구 핵심)
+  static Future<void> downloadProgressFromServer() async {
+    if (!isGoogleLinked) return;
     try {
-      await Hive.box(DatabaseService.sessionBoxName).put('user_nickname', newNickname);
-      if (isGoogleLinked) {
-        await _client.from('profiles').update({'nickname': newNickname}).eq('id', stableId);
+      final String sid = stableId; // 통합된 sid를 사용함
+      debugPrint("📥 서버 데이터 다운로드 시도 (SID: $sid)");
+      
+      final List<dynamic> response = await _client
+          .from('user_progress')
+          .select()
+          .eq('user_id', sid);
+
+      if (response.isEmpty) {
+        debugPrint("📥 서버에 저장된 진도 데이터가 없습니다.");
+        return;
       }
-      return null;
+
+      final box = Hive.box<Word>(DatabaseService.boxName);
+      int count = 0;
+      
+      for (var row in response) {
+        final String wordId = row['word_id'].toString();
+        final String level = row['level'].toString();
+        final String key = '${level}_${wordId}';
+        
+        final word = box.get(key);
+        if (word != null) {
+          word.correctCount = row['correct_count'] ?? 0;
+          word.incorrectCount = row['incorrect_count'] ?? 0;
+          word.isMemorized = row['is_memorized'] ?? false;
+          word.isBookmarked = row['is_bookmarked'] ?? false;
+          word.srsStage = row['srs_stage'] ?? 0;
+          word.nextReviewDate = row['next_review_date'] != null 
+              ? DateTime.parse(row['next_review_date']) 
+              : null;
+          await word.save();
+          count++;
+        }
+      }
+      debugPrint("📥 서버 데이터 복구 완료 ($count개 단어)");
     } catch (e) {
-      return "닉네임 수정 중 오류 발생";
+      debugPrint("❌ 서버 데이터 다운로드 실패: $e");
     }
   }
 
-  // --- 학습 데이터 관리 ---
+  static Future<void> uploadLocalDataToCloud() async {
+    if (!isGoogleLinked) return;
+    try {
+      final sid = stableId;
+      final box = Hive.box<Word>(DatabaseService.boxName);
+      final progressWords = box.values.where((w) => w.correctCount > 0 || w.incorrectCount > 0 || w.isBookmarked).toList();
+      
+      if (progressWords.isEmpty) {
+        _isMigrationComplete = true;
+        return;
+      }
+
+      final List<Map<String, dynamic>> data = progressWords.map((word) => {
+        'user_id': sid,
+        'word_id': word.id,
+        'level': word.level,
+        'correct_count': word.correctCount,
+        'incorrect_count': word.incorrectCount,
+        'is_memorized': word.isMemorized,
+        'is_bookmarked': word.isBookmarked,
+        'srs_stage': word.srsStage,
+        'next_review_date': word.nextReviewDate?.toIso8601String(),
+      }).toList();
+
+      for (var i = 0; i < data.length; i += 500) {
+        final end = (i + 500 < data.length) ? i + 500 : data.length;
+        await _client.from('user_progress').upsert(data.sublist(i, end), onConflict: 'user_id, word_id');
+      }
+      _isMigrationComplete = true; 
+      debugPrint("🚀 클라우드 동기화 완료");
+    } catch (e) {
+      _isMigrationComplete = true; 
+      debugPrint("❌ 동기화 실패: $e");
+    }
+  }
 
   static Future<void> upsertWordProgress(Word word) async {
     if (!isGoogleLinked) return; 
@@ -176,35 +234,15 @@ class SupabaseService {
     }
   }
 
-  static Future<void> uploadLocalDataToCloud() async {
-    if (!isGoogleLinked || _isMigrationComplete) return;
+  static Future<String?> updateNickname(String newNickname) async {
     try {
-      final box = Hive.box<Word>(DatabaseService.boxName);
-      final progressWords = box.values.where((w) => w.correctCount > 0 || w.incorrectCount > 0 || w.isBookmarked).toList();
-      
-      if (progressWords.isNotEmpty) {
-        final List<Map<String, dynamic>> data = progressWords.map((word) => {
-          'user_id': stableId,
-          'word_id': word.id,
-          'level': word.level,
-          'correct_count': word.correctCount,
-          'incorrect_count': word.incorrectCount,
-          'is_memorized': word.isMemorized,
-          'is_bookmarked': word.isBookmarked,
-          'srs_stage': word.srsStage,
-          'next_review_date': word.nextReviewDate?.toIso8601String(),
-        }).toList();
-
-        for (var i = 0; i < data.length; i += 500) {
-          final end = (i + 500 < data.length) ? i + 500 : data.length;
-          await _client.from('user_progress').upsert(data.sublist(i, end), onConflict: 'user_id, word_id');
-        }
+      await Hive.box(DatabaseService.sessionBoxName).put('user_nickname', newNickname);
+      if (isGoogleLinked) {
+        await _client.from('profiles').update({'nickname': newNickname}).eq('id', stableId);
       }
-      _isMigrationComplete = true; 
-      debugPrint("🚀 클라우드 동기화 완료");
+      return null;
     } catch (e) {
-      _isMigrationComplete = true; 
-      debugPrint("❌ 동기화 실패: $e");
+      return "닉네임 수정 중 오류 발생";
     }
   }
 
@@ -213,7 +251,9 @@ class SupabaseService {
       if (isGoogleLinked) {
         await _client.from('user_progress').delete().eq('user_id', stableId);
       }
-    } catch (e) {}
+    } catch (e) {
+      debugPrint("❌ 서버 데이터 초기화 실패");
+    }
   }
 
   static Future<void> resetWrongAnswers() async {
@@ -221,7 +261,9 @@ class SupabaseService {
       if (isGoogleLinked) {
         await _client.from('user_progress').update({'incorrect_count': 0}).eq('user_id', stableId).gt('incorrect_count', 0);
       }
-    } catch (e) {}
+    } catch (e) {
+      debugPrint("❌ 서버 오답 초기화 실패");
+    }
   }
 
   static Future<Map<String, dynamic>?> getAppConfig() async {
