@@ -213,7 +213,9 @@ class _QuizPageState extends State<QuizPage> {
               children: [
                 const SizedBox(height: 10),
                 Container(
-                  height: 160, alignment: Alignment.center, padding: const EdgeInsets.symmetric(horizontal: 20),
+                  constraints: const BoxConstraints(minHeight: 160), // 고정 높이 대신 최소 높이 설정
+                  alignment: Alignment.center, 
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16), // 상하 패딩 추가
                   decoration: BoxDecoration(color: isDarkMode ? Colors.white.withOpacity(0.1) : Colors.white, borderRadius: BorderRadius.circular(20)),
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -221,7 +223,10 @@ class _QuizPageState extends State<QuizPage> {
                       if (type == QuizType.kanjiToMeaning) ...[
                         Text(viewModel.isAnswered ? word.kana : ' ', style: TextStyle(fontSize: 16, color: isDarkMode ? Colors.white38 : Colors.grey[500])),
                         const SizedBox(height: 4),
-                        Text(word.kanji, style: TextStyle(fontSize: 44, fontWeight: FontWeight.bold, color: textColor)),
+                        FittedBox( // 긴 한자/카타카나 대응
+                          fit: BoxFit.scaleDown,
+                          child: Text(word.kanji, style: TextStyle(fontSize: 44, fontWeight: FontWeight.bold, color: textColor)),
+                        ),
                         const SizedBox(height: 8),
                         Opacity(
                           opacity: (widget.day != 0 && word.level >= 1 && word.level <= 3 && !viewModel.isAnswered) ? 0.0 : 1.0,
@@ -230,9 +235,16 @@ class _QuizPageState extends State<QuizPage> {
                       ] else ...[
                         Text('다음 뜻에 맞는 단어는?', style: TextStyle(fontSize: 14, color: isDarkMode ? Colors.white38 : Colors.blueGrey)),
                         const SizedBox(height: 12),
-                        Text(word.meaning, textAlign: TextAlign.center, style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: textColor)),
+                        FittedBox( // 긴 뜻 대응
+                          fit: BoxFit.scaleDown,
+                          child: Text(word.meaning, textAlign: TextAlign.center, style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: textColor)),
+                        ),
                         const SizedBox(height: 8),
-                        if (viewModel.isAnswered) Text('${word.kanji} (${word.kana}) [${word.koreanPronunciation}]', style: const TextStyle(fontSize: 16, color: Color(0xFF5B86E5), fontWeight: FontWeight.w600))
+                        if (viewModel.isAnswered) 
+                          FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text('${word.kanji} (${word.kana}) [${word.koreanPronunciation}]', style: const TextStyle(fontSize: 16, color: Color(0xFF5B86E5), fontWeight: FontWeight.w600)),
+                          )
                         else Opacity(
                           opacity: (widget.day != 0 && word.level >= 1 && word.level <= 3) ? 0.0 : 1.0,
                           child: Text('[ ${word.koreanPronunciation} ]', style: TextStyle(fontSize: 14, color: isDarkMode ? Colors.white10 : Colors.blueGrey.withOpacity(0.4))),
