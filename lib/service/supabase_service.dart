@@ -31,14 +31,13 @@ class SupabaseService {
     return newSid;
   }
 
-  // 1. 구글 로그인
   static Future<void> signInWithGoogle() async {
     try {
       final redirectUrl = dotenv.get('REDIRECT_URL');
       await _client.auth.signInWithOAuth(
         OAuthProvider.google,
         redirectTo: kIsWeb ? null : redirectUrl,
-        authScreenLaunchMode: LaunchMode.platformDefault,
+        authScreenLaunchMode: LaunchMode.externalApplication,
       );
     } catch (e) {
       debugPrint("❌ 구글 로그인 에러: $e");
@@ -59,139 +58,174 @@ class SupabaseService {
 
   static Stream<AuthState> get authStateChanges => _client.auth.onAuthStateChange;
 
-  // --- 프로필 관리 ---
+  // --- 프로필 관리 (자동 동기화 금지) ---
 
+  static Future<Map<String, dynamic>?> fetchRemoteProfile() async {
+    final currentUser = _client.auth.currentUser;
+    if (currentUser == null) return null;
+    try {
+      final List<dynamic> profiles = await _client.from('profiles').select().eq('auth_id', currentUser.id).order('created_at', ascending: true);
+      if (profiles.isNotEmpty) return profiles.first;
+    } catch (e) {}
+    return null;
+  }
+
+  static Future<void> syncStableIdWithServer(String serverSid) async {
+    final box = Hive.box(DatabaseService.sessionBoxName);
+    await box.put('stable_user_id', serverSid);
+    debugPrint("🔄 기기 ID 통합 완료: $serverSid");
+  }
+
+  static Future<void> forcePushLocalToServer(String serverSid) async {
+    try {
+      await _client.from('user_progress').delete().eq('user_id', serverSid);
+      
+      final box = Hive.box(DatabaseService.sessionBoxName);
+      final String nickname = box.get('user_nickname') ?? '알 수 없는 유저';
+      final String? recLevel = box.get('recommended_level');
+      
+      await _client.from('profiles').update({
+        'nickname': nickname,
+        'recommended_level': recLevel,
+      }).eq('id', serverSid);
+
+      await syncStableIdWithServer(serverSid);
+      await uploadLocalDataToCloud();
+      debugPrint("🚀 [강제 업로드] 로컬 데이터로 서버를 완벽히 덮어썼습니다.");
+    } catch (e) {
+      debugPrint("❌ 강제 업로드 에러: $e");
+    }
+  }
+
+  static Future<void> forcePullServerToLocal(String serverSid) async {
+    try {
+      await syncStableIdWithServer(serverSid);
+      await downloadProgressFromServer();
+      debugPrint("📥 [강제 다운로드] 서버 데이터를 로컬에 완벽히 이식했습니다.");
+    } catch (e) {
+      debugPrint("❌ 강제 다운로드 에러: $e");
+    }
+  }
+
+  /// [핵심 수정] 서버 데이터를 조회만 하고 로컬 Hive를 절대 건드리지 않음
   static Future<Map<String, dynamic>?> getUserProfile() async {
-    String sid = stableId;
     final box = Hive.box(DatabaseService.sessionBoxName);
     final currentUser = _client.auth.currentUser;
     
-    String? localNickname = box.get('user_nickname');
-    if (localNickname == null) {
-      localNickname = '냥냥이${DateTime.now().millisecondsSinceEpoch % 1000}';
-      await box.put('user_nickname', localNickname);
+    // 1. 로컬 닉네임 기본값 보장
+    if (box.get('user_nickname') == null) {
+      await box.put('user_nickname', '냥냥이${DateTime.now().millisecondsSinceEpoch % 1000}');
     }
 
-    // 로컬 추천 레벨
-    String? localRecLevel = box.get('recommended_level');
-
+    // 2. 비로그인 유저는 로컬 정보 반환
     if (!isGoogleLinked || currentUser == null) {
       _isAdmin = false;
-      return {'id': sid, 'nickname': localNickname, 'recommended_level': localRecLevel};
+      return {'id': stableId, 'nickname': box.get('user_nickname'), 'recommended_level': box.get('recommended_level')};
     }
 
-    try {
-      final List<dynamic> profiles = await _client.from('profiles')
-          .select()
-          .eq('auth_id', currentUser.id)
-          .order('created_at', ascending: true);
-
-      if (profiles.isNotEmpty) {
-        final existingProfile = profiles.first;
-        final String serverSid = existingProfile['id'];
-        final String serverNickname = existingProfile['nickname'] ?? '구글 유저';
-        final String? serverRecLevel = existingProfile['recommended_level'];
-
-        if (sid != serverSid) {
-          await box.put('stable_user_id', serverSid);
-          sid = serverSid;
-        }
-
-        // 닉네임 동기화
-        if (localNickname != serverNickname) {
-          await box.put('user_nickname', serverNickname);
-        }
-
-        // [핵심] 추천 레벨 동기화
-        if (serverRecLevel != null && serverRecLevel.isNotEmpty) {
-          if (localRecLevel != serverRecLevel) {
-            await box.put('recommended_level', serverRecLevel);
-          }
-        } else if (localRecLevel != null && localRecLevel.isNotEmpty) {
-          // 서버에 없으면 로컬 값을 서버에 저장
-          await _client.from('profiles').update({'recommended_level': localRecLevel}).eq('id', serverSid);
-        }
-
-        final String gName = currentUser.userMetadata?['full_name'] ?? currentUser.userMetadata?['name'] ?? '구글 유저';
-        if (existingProfile['google_nickname'] != gName) {
-           await _client.from('profiles').update({'google_nickname': gName}).eq('id', serverSid);
-        }
-
-        _isAdmin = existingProfile['is_admin'] ?? false;
-        return {...existingProfile, 'id': serverSid, 'nickname': serverNickname};
+    // 3. 로그인 유저: 서버 프로필 조회
+    final existingProfile = await fetchRemoteProfile();
+    if (existingProfile != null) {
+      _isAdmin = existingProfile['is_admin'] ?? false;
+      
+      // [수정] 아직 동기화 선택 전(isMigrationComplete == false)이면서 기기 ID가 통합되지 않았다면
+      // 화면이 깜빡이거나 바뀌는 것을 막기 위해 '현재 로컬 데이터'를 반환합니다.
+      if (!isMigrationComplete && existingProfile['id'] != stableId) {
+        return {
+          'id': stableId, 
+          'nickname': box.get('user_nickname'), 
+          'recommended_level': box.get('recommended_level')
+        };
       }
-
-      // 신규 유저 생성
-      final String gName = currentUser.userMetadata?['full_name'] ?? currentUser.userMetadata?['name'] ?? '구글 유저';
-      final String initialNickname = (localNickname != null && !localNickname.startsWith('냥냥이')) ? localNickname : gName;
-
-      final newProfile = {
-        'id': sid,
-        'nickname': initialNickname,
-        'auth_id': currentUser.id,
-        'google_nickname': gName,
-        'recommended_level': localRecLevel,
-      };
-      await box.put('user_nickname', initialNickname);
-      await _client.from('profiles').upsert(newProfile, onConflict: 'id');
-      return newProfile;
-    } catch (e) {
-      debugPrint("⚠️ 프로필 통합 에러: $e");
-      return {'id': sid, 'nickname': localNickname};
+      return existingProfile; 
     }
+
+    // 4. 서버에 아예 없는 신규 유저라면 현재 로컬 기준으로 생성
+    final String gName = currentUser.userMetadata?['full_name'] ?? currentUser.userMetadata?['name'] ?? '구글 유저';
+    final String initialNickname = box.get('user_nickname') ?? gName;
+    final String? localRecLevel = box.get('recommended_level');
+
+    final newProfile = {
+      'id': stableId,
+      'nickname': initialNickname,
+      'auth_id': currentUser.id,
+      'google_nickname': gName,
+      'recommended_level': localRecLevel,
+    };
+    await _client.from('profiles').upsert(newProfile, onConflict: 'id');
+    return newProfile;
   }
 
-  static String _getCurrentNickname() {
-    final box = Hive.box(DatabaseService.sessionBoxName);
-    return box.get('user_nickname') ?? '알 수 없는 유저';
+  static Future<bool> hasExistingData(String sid) async {
+    try {
+      final progress = await _client.from('user_progress').select('word_id').eq('user_id', sid).limit(1);
+      if (progress.isNotEmpty) return true;
+      final profile = await _client.from('profiles').select('recommended_level').eq('id', sid).maybeSingle();
+      if (profile != null && profile['recommended_level'] != null) return true;
+      return false;
+    } catch (e) { return false; }
   }
 
-  // --- 학습 데이터 관리 ---
+  // --- 동기화 방향성 강제 (Push vs Pull) ---
 
+  /// [서버 데이터 불러오기] 서버 데이터를 로컬 Hive에 강제 이식 (사용자 선택 시에만 실행)
   static Future<void> downloadProgressFromServer() async {
     if (!isGoogleLinked) return;
     try {
       final String sid = stableId;
-      final List<dynamic> response = await _client
-          .from('user_progress')
-          .select()
-          .eq('user_id', sid);
-
-      if (response.isEmpty) return;
-
-      final box = Hive.box<Word>(DatabaseService.boxName);
-      for (var row in response) {
-        final String wordId = row['word_id'].toString();
-        final String level = row['level'].toString();
-        final String key = '${level}_${wordId}';
-        
-        final word = box.get(key);
-        if (word != null) {
-          word.correctCount = row['correct_count'] ?? 0;
-          word.incorrectCount = row['incorrect_count'] ?? 0;
-          word.isMemorized = row['is_memorized'] ?? false;
-          word.isBookmarked = row['is_bookmarked'] ?? false;
-          word.isWrongNote = row['is_wrong_note'] ?? false;
-          word.srsStage = row['srs_stage'] ?? 0;
-          word.nextReviewDate = row['next_review_date'] != null 
-              ? DateTime.parse(row['next_review_date']) 
-              : null;
-          await word.save();
-        }
+      final box = Hive.box(DatabaseService.sessionBoxName);
+      
+      // 1. 프로필 정보(닉네임, 추천 레벨) 강제 이식
+      final profile = await fetchRemoteProfile();
+      if (profile != null) {
+        if (profile['nickname'] != null) await box.put('user_nickname', profile['nickname']);
+        if (profile['recommended_level'] != null) await box.put('recommended_level', profile['recommended_level']);
       }
-      debugPrint("📥 서버 데이터 복구 완료");
-    } catch (e) {
-      debugPrint("❌ 다운로드 실패: $e");
-    }
+
+      // 2. 단어 진도 데이터 강제 이식
+      final List<dynamic> response = await _client.from('user_progress').select().eq('user_id', sid);
+      final wordBox = Hive.box<Word>(DatabaseService.boxName);
+      for (var row in response) {
+        try {
+          final String hiveKey = '${row['level']}_${row['word_id']}';
+          final word = wordBox.get(hiveKey);
+          if (word != null) {
+            word.correctCount = row['correct_count'] as int? ?? 0;
+            word.incorrectCount = row['incorrect_count'] as int? ?? 0;
+            word.isMemorized = row['is_memorized'] as bool? ?? false;
+            word.isBookmarked = row['is_bookmarked'] as bool? ?? false;
+            word.isWrongNote = row['is_wrong_note'] as bool? ?? false;
+            word.srsStage = row['srs_stage'] as int? ?? 0;
+            final String? rawDate = row['next_review_date'] as String?;
+            word.nextReviewDate = rawDate != null ? DateTime.tryParse(rawDate) : null;
+            await word.save();
+          }
+        } catch (e) {}
+      }
+      debugPrint("📥 [불러오기 완료] 서버 데이터가 로컬을 완전히 대체했습니다.");
+    } catch (e) { debugPrint("❌ 다운로드 실패: $e"); }
   }
 
+  /// [로컬 데이터 유지] 현재 로컬 상태를 서버에 강제로 덮어씌움 (사용자 선택 시에만 실행)
   static Future<void> uploadLocalDataToCloud() async {
-    if (!isGoogleLinked) return; // 내부 _isMigrationComplete 체크 제거하여 수동 호출 보장
+    if (!isGoogleLinked) return;
     try {
       final sid = stableId;
-      final nickname = _getCurrentNickname();
-      final box = Hive.box<Word>(DatabaseService.boxName);
-      final progressWords = box.values.where((w) => w.correctCount > 0 || w.incorrectCount > 0 || w.isBookmarked || w.isWrongNote).toList();
+      final box = Hive.box(DatabaseService.sessionBoxName);
+      final String nickname = box.get('user_nickname') ?? '알 수 없는 유저';
+      final String? recLevel = box.get('recommended_level');
+
+      // 1. 서버 프로필을 현재 로컬 값으로 강제 업데이트 (Push)
+      await _client.from('profiles').update({
+        'nickname': nickname,
+        'recommended_level': recLevel,
+      }).eq('id', sid);
+
+      // 2. 단어 진도 데이터 강제 업로드 (Push)
+      final wordBox = Hive.box<Word>(DatabaseService.boxName);
+      final progressWords = wordBox.values.where((w) => 
+        w.correctCount > 0 || w.incorrectCount > 0 || w.isBookmarked || w.isWrongNote || w.isMemorized
+      ).toList();
       
       if (progressWords.isNotEmpty) {
         final List<Map<String, dynamic>> data = progressWords.map((word) => {
@@ -213,10 +247,8 @@ class SupabaseService {
           await _client.from('user_progress').upsert(data.sublist(i, end), onConflict: 'user_id, word_id');
         }
       }
-      debugPrint("🚀 로컬 데이터 업로드 완료");
-    } catch (e) {
-      debugPrint("❌ 업로드 실패: $e");
-    }
+      debugPrint("🚀 [유지 완료] 현재 기기 데이터로 서버 기록을 최신화했습니다.");
+    } catch (e) { debugPrint("❌ 업로드 실패: $e"); }
   }
 
   static Future<void> upsertWordProgress(Word word) async {
@@ -224,7 +256,7 @@ class SupabaseService {
     try {
       await _client.from('user_progress').upsert({
         'user_id': stableId,
-        'nickname': _getCurrentNickname(),
+        'nickname': Hive.box(DatabaseService.sessionBoxName).get('user_nickname'),
         'word_id': word.id,
         'level': word.level,
         'correct_count': word.correctCount,
@@ -238,23 +270,30 @@ class SupabaseService {
     } catch (e) {}
   }
 
-  static Future<String?> updateNickname(String newNickname) async {
+  static Future<void> updateNickname(String newNickname) async {
     try {
       await Hive.box(DatabaseService.sessionBoxName).put('user_nickname', newNickname);
       if (isGoogleLinked) {
         await _client.from('profiles').update({'nickname': newNickname}).eq('id', stableId);
         await _client.from('user_progress').update({'nickname': newNickname}).eq('user_id', stableId);
       }
-      return null;
-    } catch (e) {
-      return "닉네임 수정 중 오류 발생";
-    }
+    } catch (e) {}
+  }
+
+  static Future<void> resetRecommendedLevel() async {
+    try {
+      await Hive.box(DatabaseService.sessionBoxName).delete('recommended_level');
+      if (isGoogleLinked) {
+        await _client.from('profiles').update({'recommended_level': null}).eq('id', stableId);
+      }
+    } catch (e) {}
   }
 
   static Future<void> clearAllProgress() async {
     try {
       if (isGoogleLinked) {
         await _client.from('user_progress').delete().eq('user_id', stableId);
+        await _client.from('profiles').update({'recommended_level': null}).eq('id', stableId);
       }
     } catch (e) {}
   }
@@ -262,29 +301,20 @@ class SupabaseService {
   static Future<void> resetWrongAnswers() async {
     try {
       if (isGoogleLinked) {
-        await _client.from('user_progress').update({
-          'incorrect_count': 0,
-          'is_wrong_note': false
-        }).eq('user_id', stableId);
+        await _client.from('user_progress').update({'incorrect_count': 0, 'is_wrong_note': false}).eq('user_id', stableId);
       }
     } catch (e) {}
   }
 
   static Future<Map<String, dynamic>?> getAppConfig() async {
-    try {
-      return await _client.from('app_config').select().single();
-    } catch (e) {
-      return null;
-    }
+    try { return await _client.from('app_config').select().single(); } catch (e) { return null; }
   }
 
   static Future<List<Word>> fetchAllWords() async {
     try {
       final List<dynamic> response = await _client.from('words').select();
       return response.map((json) => Word.fromJson(json)).toList();
-    } catch (e) {
-      return [];
-    }
+    } catch (e) { return []; }
   }
 
   static Future<void> bulkUpsertWords(List<Word> words) async {
@@ -296,8 +326,6 @@ class SupabaseService {
         final end = (i + 1000 < data.length) ? i + 1000 : data.length;
         await _client.from('words').upsert(data.sublist(i, end), onConflict: 'id');
       }
-    } catch (e) {
-      rethrow;
-    }
+    } catch (e) { rethrow; }
   }
 }

@@ -30,24 +30,80 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
           SupabaseService.isGoogleLinked && 
           !SupabaseService.isMigrationComplete) {
         
-        debugPrint("🔔 구글 로그인 성공 감지! 데이터 이사 시작...");
+        debugPrint("🔔 구글 로그인 성공! 동기화 판단 시작...");
         
-        await _loadUserProfile();
-        await SupabaseService.uploadLocalDataToCloud();    // [우선순위 1] 오프라인 변경사항 서버로 밀어넣기
-        await SupabaseService.downloadProgressFromServer(); // [우선순위 2] 서버의 나머지 데이터 가져오기
-
-        // 모든 이사 로직 완료 후 플래그 설정
-        SupabaseService.isMigrationComplete = true;
+        // [중요] 절대 _loadUserProfile()을 여기서 미리 부르지 않음!
+        // 서버에 데이터가 있는지만 조용히 확인
+        final remoteProfile = await SupabaseService.fetchRemoteProfile();
 
         if (mounted) {
-          setState(() {}); // [추가] 화면 강제 새로고침 (추천 레벨, 진도율 반영)
-          ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("학습 데이터가 안전하게 보관되었습니다! 🎉")),
-          );
+          if (remoteProfile != null) {
+            // 서버 데이터가 있다면 선택지 제공 (이때 로컬 데이터는 그대로 살아있음)
+            _showSyncConflictDialog(context, remoteProfile['id']);
+          } else {
+            // 신규 유저라면 현재 로컬 정보를 서버로 즉시 업로드
+            await _loadUserProfile(); // 프로필 생성
+            await SupabaseService.uploadLocalDataToCloud(); // 데이터 업로드
+            SupabaseService.isMigrationComplete = true;
+            if (mounted) {
+              setState(() {});
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("첫 클라우드 동기화가 완료되었습니다! 🎉")));
+            }
+          }
         }
       }
     });
+  }
+
+  void _showSyncConflictDialog(BuildContext context, String serverSid) {
+    final messenger = ScaffoldMessenger.of(context); 
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF2D3436) : Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Text('동기화 선택', style: TextStyle(fontWeight: FontWeight.bold)),
+        content: const Text('서버에 기존 학습 기록이 있습니다.\n어떤 데이터를 유지할까요?'),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              // [로컬 데이터 유지 시나리오] 서버를 확실히 덮어쓰고 UI 갱신
+              await SupabaseService.forcePushLocalToServer(serverSid);
+              
+              SupabaseService.isMigrationComplete = true;
+              if (mounted) {
+                await _loadUserProfile(); 
+                setState(() {});
+                messenger.showSnackBar(const SnackBar(content: Text("현재 기기의 데이터를 서버에 안전하게 보존했습니다. 🎉")));
+              }
+            },
+            child: const Text('로컬 데이터 유지'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              // [서버 기록 불러오기 시나리오] 로컬을 확실히 덮어쓰고 UI 갱신
+              await SupabaseService.forcePullServerToLocal(serverSid);
+              
+              SupabaseService.isMigrationComplete = true;
+              if (mounted) {
+                await _loadUserProfile(); 
+                setState(() {});
+                messenger.showSnackBar(const SnackBar(content: Text("서버의 소중한 기록들을 모두 불러왔습니다. 📥")));
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF5B86E5),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            child: const Text('서버 기록 불러오기'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -107,13 +163,11 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
             onPressed: () async {
               final newName = controller.text.trim();
               if (newName.isNotEmpty) {
-                final errorMsg = await SupabaseService.updateNickname(newName);
-                if (errorMsg == null && mounted) {
+                await SupabaseService.updateNickname(newName);
+                if (mounted) {
                   setState(() => _nickname = newName);
                   Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("닉네임이 변경되었습니다.")));
-                } else if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(errorMsg!)));
                 }
               }
             },
@@ -143,13 +197,47 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
             final bool isDarkMode = sBox.get('dark_mode', defaultValue: false);
             final Color textColor = isDarkMode ? Colors.white : Colors.black87;
             final Color subTextColor = isDarkMode ? Colors.grey[400]! : Colors.grey[600]!;
-            final Color cardColor = isDarkMode ? Colors.white.withOpacity(0.1) : Colors.white;
+            final Color cardColor = isDarkMode ? Colors.white.withValues(alpha: 0.1) : Colors.white;
 
-            final totalWords = wBox.length;
-            final learnedWords = wBox.values.where((w) => w.correctCount > 0).length;
+            final Map<int, Word> uniqueWords = {};
+            for (var w in wBox.values) {
+              if (!uniqueWords.containsKey(w.id)) {
+                uniqueWords[w.id] = w;
+              } else {
+                if (w.correctCount > uniqueWords[w.id]!.correctCount) {
+                  uniqueWords[w.id] = w;
+                }
+              }
+            }
+
+            final dynamic rawRecommendedLevel = sBox.get('recommended_level', defaultValue: '기록 없음');
+            final String recommendedLevel = rawRecommendedLevel?.toString() ?? '기록 없음';
+            
+            List<Word> targetWords;
+            if (recommendedLevel != '기록 없음') {
+              int levelInt = 5;
+              if (recommendedLevel.contains('N')) {
+                levelInt = int.tryParse(recommendedLevel.replaceAll('N', '')) ?? 5;
+              } else if (recommendedLevel.contains('히라가나')) {
+                levelInt = 11;
+              } else if (recommendedLevel.contains('가타카나')) {
+                levelInt = 12;
+              }
+              targetWords = uniqueWords.values.where((w) => w.level == levelInt).toList();
+            } else {
+              targetWords = uniqueWords.values.toList();
+            }
+
+            final totalWords = targetWords.length;
+            final learnedWords = targetWords.where((w) => w.correctCount > 0).length;
             final progress = totalWords > 0 ? (learnedWords / totalWords) * 100 : 0.0;
-            final reviewWords = wBox.values.where((w) => w.incorrectCount > 0).length;
-            final recommendedLevel = sBox.get('recommended_level', defaultValue: '기록 없음');
+            
+            final now = DateTime.now();
+            final reviewWords = uniqueWords.values.where((w) {
+              if (w.isWrongNote) return true;
+              if (w.nextReviewDate != null && w.nextReviewDate!.isBefore(now)) return true;
+              return false;
+            }).length;
 
             return Scaffold(
               backgroundColor: Colors.transparent,
@@ -173,7 +261,7 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
                         decoration: BoxDecoration(
                           color: cardColor,
                           borderRadius: BorderRadius.circular(20),
-                          boxShadow: isDarkMode ? [] : [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 10, offset: const Offset(0, 4))],
+                          boxShadow: isDarkMode ? [] : [BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 10, offset: const Offset(0, 4))],
                         ),
                         child: Row(
                           children: [
@@ -181,7 +269,7 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
                               children: [
                                 CircleAvatar(
                                   radius: 25,
-                                  backgroundColor: const Color(0xFF5B86E5).withOpacity(0.1),
+                                  backgroundColor: const Color(0xFF5B86E5).withValues(alpha: 0.1),
                                   child: Icon(
                                     SupabaseService.isGoogleLinked ? Icons.person_rounded : Icons.person_outline_rounded, 
                                     color: const Color(0xFF5B86E5), 
@@ -212,7 +300,7 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
                                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: textColor)),
                                   if (SupabaseService.isGoogleLinked)
                                     Text(SupabaseService.userEmail ?? '구글 계정 연동됨', 
-                                      style: TextStyle(fontSize: 11, color: const Color(0xFF5B86E5), fontWeight: FontWeight.w500))
+                                      style: const TextStyle(fontSize: 11, color: Color(0xFF5B86E5), fontWeight: FontWeight.w500))
                                   else
                                     Text('로그인하여 데이터를 보호하세요 🐾', 
                                       style: TextStyle(fontSize: 11, color: subTextColor)),
@@ -235,7 +323,7 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
                         decoration: BoxDecoration(
                           color: cardColor,
                           borderRadius: BorderRadius.circular(20),
-                          boxShadow: isDarkMode ? [] : [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 10, offset: const Offset(0, 4))],
+                          boxShadow: isDarkMode ? [] : [BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 10, offset: const Offset(0, 4))],
                         ),
                         child: Column(
                           children: [
@@ -276,8 +364,9 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
                         subtitle: '추천 레벨 및 테스트 기록 삭제',
                         icon: Icons.refresh_rounded,
                         isDarkMode: isDarkMode,
-                        onTap: () => _showResetDialog(context, '레벨 테스트 초기화', '추천 레벨 기록을 삭제하시겠습니까?', () {
-                          sBox.delete('recommended_level');
+                        onTap: () => _showResetDialog(context, '레벨 테스트 초기화', '추천 레벨 기록을 삭제하시겠습니까?', () async {
+                          await SupabaseService.resetRecommendedLevel();
+                          if (mounted) setState(() {});
                         }),
                       ),
                       const SizedBox(height: 12),
@@ -288,15 +377,27 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
                         icon: Icons.delete_forever_rounded,
                         color: Colors.redAccent,
                         isDarkMode: isDarkMode,
-                        onTap: () => _showResetDialog(context, '모든 학습 기록 초기화', '정말 초기화하시겠습니까?', () async {
+                        onTap: () => _showResetDialog(context, '모든 학습 기록 초기화', '정말 모든 데이터를 공장 초기화하시겠습니까?\n(추천 레벨 및 모든 학습 기록이 삭제됩니다)', () async {
                           await SupabaseService.clearAllProgress();
+                          
+                          await sBox.delete('recommended_level');
+                          final keys = sBox.keys.where((k) => k.toString().contains('todays_words') || k.toString().contains('study_count'));
+                          for (var key in keys) { await sBox.delete(key); }
+
                           final wBox = Hive.box<Word>(DatabaseService.boxName);
                           for (var word in wBox.values) {
-                            word.correctCount = 0; word.incorrectCount = 0; word.isMemorized = false; word.isBookmarked = false;
-                            word.srsStage = 0; word.nextReviewDate = null;
-                            word.save();
+                            word.correctCount = 0; 
+                            word.incorrectCount = 0; 
+                            word.isMemorized = false; 
+                            word.isBookmarked = false;
+                            word.isWrongNote = false;
+                            word.srsStage = 0; 
+                            word.nextReviewDate = null;
+                            await word.save();
                           }
+                          
                           _loadUserProfile();
+                          if (mounted) setState(() {});
                         }),
                       ),
                       const SizedBox(height: 32),
@@ -305,7 +406,7 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
                           valueListenable: sBox.listenable(keys: ['master_data_version']),
                           builder: (context, box, _) => Text(
                             '데이터 버전: v${box.get('master_data_version', defaultValue: 1.0)}',
-                            style: TextStyle(fontSize: 11, color: isDarkMode ? Colors.white24 : Colors.grey.withOpacity(0.4)),
+                            style: TextStyle(fontSize: 11, color: isDarkMode ? Colors.white24 : Colors.grey.withValues(alpha: 0.4)),
                           ),
                         ),
                       ),
@@ -344,9 +445,9 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: isDarkMode ? Colors.white.withOpacity(0.1) : Colors.white,
+          color: isDarkMode ? Colors.white.withValues(alpha: 0.1) : Colors.white,
           borderRadius: BorderRadius.circular(16),
-          boxShadow: isDarkMode ? [] : [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 10, offset: const Offset(0, 4))],
+          boxShadow: isDarkMode ? [] : [BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 10, offset: const Offset(0, 4))],
         ),
         child: Row(
           children: [
