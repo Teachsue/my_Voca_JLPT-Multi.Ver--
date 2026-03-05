@@ -29,8 +29,12 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
       if (data.event == AuthChangeEvent.signedIn && 
           SupabaseService.isGoogleLinked && 
           !SupabaseService.isMigrationComplete) {
+        
         debugPrint("🔔 구글 로그인 성공 감지! 데이터 이사 시작...");
         
+        // 이사가 시작됨을 즉시 알림 (중복 호출 방지)
+        SupabaseService.isMigrationComplete = true;
+
         if (mounted) {
           ScaffoldMessenger.of(context).hideCurrentSnackBar();
           ScaffoldMessenger.of(context).showSnackBar(
