@@ -26,7 +26,9 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
     
     // 구글 로그인 상태 변화 감시
     _authSubscription = SupabaseService.authStateChanges.listen((data) async {
-      if (data.event == AuthChangeEvent.signedIn && SupabaseService.isGoogleLinked) {
+      if (data.event == AuthChangeEvent.signedIn && 
+          SupabaseService.isGoogleLinked && 
+          !SupabaseService.isMigrationComplete) {
         debugPrint("🔔 구글 로그인 성공 감지! 데이터 이사 시작...");
         
         if (mounted) {

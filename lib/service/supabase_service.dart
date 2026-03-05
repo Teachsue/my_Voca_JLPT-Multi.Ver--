@@ -10,8 +10,12 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 class SupabaseService {
   static final SupabaseClient _client = Supabase.instance.client;
   static bool _isAdmin = false;
+  static bool _isMigrationComplete = false; // 이번 세션에서 데이터 이사가 완료되었는지 확인
 
   static bool get isAdmin => _isAdmin;
+  static bool get isMigrationComplete => _isMigrationComplete;
+  static set isMigrationComplete(bool value) => _isMigrationComplete = value;
+
   static String? get userEmail => _client.auth.currentUser?.email;
   static bool get isGoogleLinked => _client.auth.currentUser?.identities?.any((id) => id.provider == 'google') ?? false;
   static bool get isAnonymous => !isGoogleLinked;
@@ -46,6 +50,7 @@ class SupabaseService {
   // 2. 로그아웃 (Stable ID는 보존됨)
   static Future<void> signOut() async {
     _isAdmin = false;
+    _isMigrationComplete = false; // 로그아웃 시 플래그 초기화
     await _client.auth.signOut();
     debugPrint("🚪 로그아웃 완료 (오프라인 모드 전환)");
   }
@@ -84,27 +89,30 @@ class SupabaseService {
     try {
       final response = await _client.from('profiles').select().eq('id', sid).maybeSingle();
       
-      // 구글 메타데이터에서 닉네임(또는 이름) 추출
+      // 구글 메타데이터에서 이름 추출
       final String gNickname = currentUser?.userMetadata?['full_name'] ?? currentUser?.userMetadata?['name'] ?? '구글 유저';
 
       if (response != null) {
         _isAdmin = response['is_admin'] ?? false;
         
-        // [핵심] 서버에 구글 연동 기록이 없거나 구글 닉네임이 바뀐 경우
+        // [수정] 서버에 구글 연동 기록이 없거나 구글 이름 정보가 바뀐 경우 계정 연동(RPC)만 수행
         if (response['google_nickname'] == null || response['google_nickname'] != gNickname) {
           await _client.rpc('safely_link_google_account', params: {
             'p_sid': sid,
             'p_google_nickname': gNickname
           });
           
-          // 로컬 Hive도 구글 닉네임으로 즉시 동기화 (디폴트 채택)
-          await box.put('user_nickname', gNickname);
-          
-          // 최신 정보 다시 조회하여 반환
-          return await _client.from('profiles').select().eq('id', sid).single();
+          // [중요] 연동 후에도 사용자가 이미 설정한 nickname이 있다면 유지해야 함
+          // 서버에서 최신 프로필 다시 조회 (RPC가 nickname을 건드리지 않았는지 확인)
+          final updatedProfile = await _client.from('profiles').select().eq('id', sid).single();
+          if (localNickname != updatedProfile['nickname']) {
+             await box.put('user_nickname', updatedProfile['nickname']);
+          }
+          return updatedProfile;
         }
         
-        // 이미 연동되어 있다면 서버 닉네임을 로컬 Hive에 동기화 (서버가 상위 데이터)
+        // [중요] 이미 연동된 유저라면 서버의 nickname을 로컬 Hive에 동기화 (서버가 상위 데이터)
+        // 사용자가 마지막에 수정한 닉네임은 서버에 저장되어 있으므로 이를 가져옴
         if (localNickname != response['nickname']) {
           await box.put('user_nickname', response['nickname']);
         }
@@ -169,7 +177,10 @@ class SupabaseService {
     try {
       final box = Hive.box<Word>(DatabaseService.boxName);
       final progressWords = box.values.where((w) => w.correctCount > 0 || w.incorrectCount > 0 || w.isBookmarked).toList();
-      if (progressWords.isEmpty) return;
+      if (progressWords.isEmpty) {
+        _isMigrationComplete = true; // 옮길 데이터가 없어도 완료로 표시
+        return;
+      }
 
       final List<Map<String, dynamic>> data = progressWords.map((word) => {
         'user_id': stableId,
@@ -187,6 +198,7 @@ class SupabaseService {
         final end = (i + 500 < data.length) ? i + 500 : data.length;
         await _client.from('user_progress').upsert(data.sublist(i, end), onConflict: 'user_id, word_id');
       }
+      _isMigrationComplete = true; // 이사 완료 플래그 설정
       debugPrint("🚀 클라우드 이사 완료");
     } catch (e) {
       debugPrint("❌ 이사 실패: $e");
