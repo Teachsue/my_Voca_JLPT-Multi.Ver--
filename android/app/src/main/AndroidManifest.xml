@@ -1,6 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 <application
-    android:label="냥냥일본어"  android:name="${applicationName}" android:icon="@mipmap/launcher_icon">
+    android:label="냥냥일본어"
+    android:name="${applicationName}"
+    android:icon="@mipmap/launcher_icon"
+    android:allowBackup="false"
+    android:fullBackupContent="false">
         <activity
             android:name=".MainActivity"
             android:exported="true"

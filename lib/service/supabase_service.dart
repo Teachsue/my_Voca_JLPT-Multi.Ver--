@@ -72,9 +72,12 @@ class SupabaseService {
       await box.put('user_nickname', localNickname);
     }
 
+    // 로컬 추천 레벨
+    String? localRecLevel = box.get('recommended_level');
+
     if (!isGoogleLinked || currentUser == null) {
       _isAdmin = false;
-      return {'id': sid, 'nickname': localNickname};
+      return {'id': sid, 'nickname': localNickname, 'recommended_level': localRecLevel};
     }
 
     try {
@@ -87,14 +90,26 @@ class SupabaseService {
         final existingProfile = profiles.first;
         final String serverSid = existingProfile['id'];
         final String serverNickname = existingProfile['nickname'] ?? '구글 유저';
+        final String? serverRecLevel = existingProfile['recommended_level'];
 
         if (sid != serverSid) {
           await box.put('stable_user_id', serverSid);
           sid = serverSid;
         }
 
+        // 닉네임 동기화
         if (localNickname != serverNickname) {
           await box.put('user_nickname', serverNickname);
+        }
+
+        // [핵심] 추천 레벨 동기화
+        if (serverRecLevel != null && serverRecLevel.isNotEmpty) {
+          if (localRecLevel != serverRecLevel) {
+            await box.put('recommended_level', serverRecLevel);
+          }
+        } else if (localRecLevel != null && localRecLevel.isNotEmpty) {
+          // 서버에 없으면 로컬 값을 서버에 저장
+          await _client.from('profiles').update({'recommended_level': localRecLevel}).eq('id', serverSid);
         }
 
         final String gName = currentUser.userMetadata?['full_name'] ?? currentUser.userMetadata?['name'] ?? '구글 유저';
@@ -106,6 +121,7 @@ class SupabaseService {
         return {...existingProfile, 'id': serverSid, 'nickname': serverNickname};
       }
 
+      // 신규 유저 생성
       final String gName = currentUser.userMetadata?['full_name'] ?? currentUser.userMetadata?['name'] ?? '구글 유저';
       final String initialNickname = (localNickname != null && !localNickname.startsWith('냥냥이')) ? localNickname : gName;
 
@@ -114,6 +130,7 @@ class SupabaseService {
         'nickname': initialNickname,
         'auth_id': currentUser.id,
         'google_nickname': gName,
+        'recommended_level': localRecLevel,
       };
       await box.put('user_nickname', initialNickname);
       await _client.from('profiles').upsert(newProfile, onConflict: 'id');
@@ -124,13 +141,12 @@ class SupabaseService {
     }
   }
 
-  // --- 학습 데이터 관리 (닉네임 필드 추가) ---
-
-  /// 로컬 저장된 현재 유저의 닉네임 가져오기
   static String _getCurrentNickname() {
     final box = Hive.box(DatabaseService.sessionBoxName);
     return box.get('user_nickname') ?? '알 수 없는 유저';
   }
+
+  // --- 학습 데이터 관리 ---
 
   static Future<void> downloadProgressFromServer() async {
     if (!isGoogleLinked) return;
@@ -163,23 +179,24 @@ class SupabaseService {
           await word.save();
         }
       }
+      debugPrint("📥 서버 데이터 복구 완료");
     } catch (e) {
       debugPrint("❌ 다운로드 실패: $e");
     }
   }
 
   static Future<void> uploadLocalDataToCloud() async {
-    if (!isGoogleLinked) return;
+    if (!isGoogleLinked) return; // 내부 _isMigrationComplete 체크 제거하여 수동 호출 보장
     try {
       final sid = stableId;
-      final nickname = _getCurrentNickname(); // 닉네임 가져오기
+      final nickname = _getCurrentNickname();
       final box = Hive.box<Word>(DatabaseService.boxName);
       final progressWords = box.values.where((w) => w.correctCount > 0 || w.incorrectCount > 0 || w.isBookmarked || w.isWrongNote).toList();
       
       if (progressWords.isNotEmpty) {
         final List<Map<String, dynamic>> data = progressWords.map((word) => {
           'user_id': sid,
-          'nickname': nickname, // [추가] 닉네임 포함
+          'nickname': nickname,
           'word_id': word.id,
           'level': word.level,
           'correct_count': word.correctCount,
@@ -196,7 +213,7 @@ class SupabaseService {
           await _client.from('user_progress').upsert(data.sublist(i, end), onConflict: 'user_id, word_id');
         }
       }
-      debugPrint("🚀 클라우드 동기화 완료 (닉네임: $nickname)");
+      debugPrint("🚀 로컬 데이터 업로드 완료");
     } catch (e) {
       debugPrint("❌ 업로드 실패: $e");
     }
@@ -207,7 +224,7 @@ class SupabaseService {
     try {
       await _client.from('user_progress').upsert({
         'user_id': stableId,
-        'nickname': _getCurrentNickname(), // [추가] 닉네임 포함
+        'nickname': _getCurrentNickname(),
         'word_id': word.id,
         'level': word.level,
         'correct_count': word.correctCount,
@@ -226,7 +243,6 @@ class SupabaseService {
       await Hive.box(DatabaseService.sessionBoxName).put('user_nickname', newNickname);
       if (isGoogleLinked) {
         await _client.from('profiles').update({'nickname': newNickname}).eq('id', stableId);
-        // 프로필 닉네임 변경 시 기존 progress 데이터의 닉네임들도 모두 업데이트하면 좋음 (선택사항)
         await _client.from('user_progress').update({'nickname': newNickname}).eq('user_id', stableId);
       }
       return null;

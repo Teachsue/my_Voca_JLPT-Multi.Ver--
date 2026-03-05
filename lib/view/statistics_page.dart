@@ -32,21 +32,15 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
         
         debugPrint("🔔 구글 로그인 성공 감지! 데이터 이사 시작...");
         
-        // 이사가 시작됨을 즉시 알림 (중복 호출 방지)
-        SupabaseService.isMigrationComplete = true;
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("구글 계정 연동 중... 🐾"), duration: Duration(seconds: 2)),
-          );
-        }
-
         await _loadUserProfile();
         await SupabaseService.uploadLocalDataToCloud();    // [우선순위 1] 오프라인 변경사항 서버로 밀어넣기
         await SupabaseService.downloadProgressFromServer(); // [우선순위 2] 서버의 나머지 데이터 가져오기
 
+        // 모든 이사 로직 완료 후 플래그 설정
+        SupabaseService.isMigrationComplete = true;
+
         if (mounted) {
+          setState(() {}); // [추가] 화면 강제 새로고침 (추천 레벨, 진도율 반영)
           ScaffoldMessenger.of(context).hideCurrentSnackBar();
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text("학습 데이터가 안전하게 보관되었습니다! 🎉")),
