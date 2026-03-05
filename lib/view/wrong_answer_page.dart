@@ -5,8 +5,27 @@ import '../service/database_service.dart';
 import '../service/supabase_service.dart';
 import 'quiz_page.dart';
 
-class WrongAnswerPage extends StatelessWidget {
+class WrongAnswerPage extends StatefulWidget {
   const WrongAnswerPage({super.key});
+
+  @override
+  State<WrongAnswerPage> createState() => _WrongAnswerPageState();
+}
+
+class _WrongAnswerPageState extends State<WrongAnswerPage> {
+  @override
+  void initState() {
+    super.initState();
+    // 진입 시 서버에서 최신 오답노트 상태 가져오기
+    SupabaseService.downloadProgressFromServer();
+  }
+
+  @override
+  void dispose() {
+    // 나갈 때 변경사항 서버에 일괄 반영
+    SupabaseService.uploadLocalDataToCloud();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -26,7 +45,7 @@ class WrongAnswerPage extends StatelessWidget {
           IconButton(
             icon: Icon(Icons.delete_sweep_rounded, size: 22, color: textColor),
             onPressed: () => _showResetDialog(context, isDarkMode),
-            tooltip: '초기화'
+            tooltip: '전체 삭제'
           ),
         ],
       ),
@@ -34,7 +53,7 @@ class WrongAnswerPage extends StatelessWidget {
         child: ValueListenableBuilder(
           valueListenable: Hive.box<Word>(DatabaseService.boxName).listenable(),
           builder: (context, Box<Word> box, _) {
-            final wrongWords = box.values.where((w) => w.incorrectCount > 0).toList()
+            final wrongWords = box.values.where((w) => w.isWrongNote).toList()
               ..sort((a, b) => b.incorrectCount.compareTo(a.incorrectCount));
 
             if (wrongWords.isEmpty) {
@@ -44,7 +63,7 @@ class WrongAnswerPage extends StatelessWidget {
                   children: [
                     Icon(Icons.assignment_turned_in_rounded, size: 64, color: isDarkMode ? Colors.white10 : Colors.grey[300]),
                     const SizedBox(height: 16),
-                    Text('오답 기록이 없습니다.\n모든 단어를 마스터하셨네요!', textAlign: TextAlign.center, style: TextStyle(fontSize: 17, color: subTextColor)),
+                    Text('오답노트가 비어있습니다.\n틀린 단어들을 여기서 모아보세요!', textAlign: TextAlign.center, style: TextStyle(fontSize: 17, color: subTextColor)),
                   ],
                 ),
               );
@@ -111,15 +130,15 @@ class WrongAnswerPage extends StatelessWidget {
                                 child: Text('틀림 ${word.incorrectCount}', style: TextStyle(color: Colors.redAccent, fontSize: 10, fontWeight: FontWeight.bold)),
                               ),
                               IconButton(
-                                icon: Icon(Icons.delete_outline_rounded, color: isDarkMode ? Colors.white24 : Colors.red[200], size: 22),
+                                icon: Icon(Icons.remove_circle_outline_rounded, color: isDarkMode ? Colors.white24 : Colors.red[200], size: 22),
                                 onPressed: () async { 
-                                  word.incorrectCount = 0; 
+                                  word.isWrongNote = false; 
                                   await word.save(); 
-                                  // 서버와 실시간 동기화
                                   await SupabaseService.upsertWordProgress(word);
                                 },
                                 constraints: const BoxConstraints(),
                                 padding: const EdgeInsets.only(top: 4),
+                                tooltip: '오답노트에서 제거',
                               ),
                             ],
                           ),
@@ -173,27 +192,23 @@ class WrongAnswerPage extends StatelessWidget {
       builder: (context) => AlertDialog(
         backgroundColor: isDarkMode ? const Color(0xFF2D3436) : Colors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        title: Text('오답 기록 초기화', style: TextStyle(fontWeight: FontWeight.bold, color: isDarkMode ? Colors.white : Colors.black87)),
-        content: Text('모든 단어의 오답 기록을 삭제하시겠습니까?', style: TextStyle(color: isDarkMode ? Colors.white70 : Colors.black54)),
+        title: Text('오답노트 비우기', style: TextStyle(fontWeight: FontWeight.bold, color: isDarkMode ? Colors.white : Colors.black87)),
+        content: Text('오답노트에 담긴 모든 단어를 제거하시겠습니까?\n(통계용 오답 횟수는 유지됩니다)', style: TextStyle(color: isDarkMode ? Colors.white70 : Colors.black54)),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('취소')),
           TextButton(
             onPressed: () async {
               final box = Hive.box<Word>(DatabaseService.boxName);
-              final wrongWords = box.values.where((w) => w.incorrectCount > 0).toList();
+              final wrongWords = box.values.where((w) => w.isWrongNote).toList();
               
-              // 1. 로컬 데이터 초기화 (빠르게 수행)
               for (var word in wrongWords) {
-                word.incorrectCount = 0;
+                word.isWrongNote = false;
                 await word.save();
               }
-
-              // 2. 서버 데이터 일괄 초기화 (한 번의 요청으로 끝!)
-              await SupabaseService.resetWrongAnswers();
-
+              await SupabaseService.resetWrongAnswers(); 
               if (context.mounted) Navigator.pop(context);
             },
-            child: const Text('초기화', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+            child: const Text('비우기', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
           ),
         ],
       ),

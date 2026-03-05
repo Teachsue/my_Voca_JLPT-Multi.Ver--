@@ -213,7 +213,9 @@ class StudyViewModel extends ChangeNotifier {
       _advanceSRSStage(currentWord!);
     } else {
       _isCorrect = false;
-      currentWord!.incorrectCount++;
+      // [수정] 오답은 1로 관리 (사용자 요청)
+      currentWord!.incorrectCount = 1; 
+      currentWord!.isWrongNote = true; // 오답노트 포함
       
       // SRS 단계 초기화 (틀리면 처음부터 다시)
       _resetSRSStage(currentWord!);
