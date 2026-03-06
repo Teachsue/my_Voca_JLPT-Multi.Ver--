@@ -17,7 +17,6 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
   String _nickname = '냥냥이...';
   bool _isLoadingProfile = false;
   
-  // [최적화] 통계 결과값을 메모리에 캐싱하여 랙 방지
   double _progress = 0.0;
   int _reviewWords = 0;
   bool _isCalculating = false;
@@ -29,7 +28,7 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _loadUserProfile();
-    _calculateStats(); // 초기 통계 계산
+    _calculateStats();
 
     _authSubscription = SupabaseService.authStateChanges.listen((data) async {
       final sessionBox = Hive.box(DatabaseService.sessionBoxName);
@@ -39,6 +38,7 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
       if (data.event == AuthChangeEvent.signedIn && SupabaseService.isGoogleLinked) {
         if (currentAuthId != null && currentAuthId != lastSyncedId) {
           debugPrint("🔓 새로운 로그인 계정 확인됨. 동기화 팝업 준비 중...");
+          // 로그인 직후에는 마이그레이션 전이므로 프로필만 가볍게 로드 (Hive 덮어쓰기 없음)
           _loadUserProfile();
           Future.delayed(const Duration(milliseconds: 1200), () {
             if (mounted) _showSyncChoiceDialog();
@@ -50,47 +50,39 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
 
   @override
   void dispose() {
+    // [핵심] 설정 페이지를 나갈 때 최신 로컬 설정을 서버로 강제 동기화
+    if (SupabaseService.isGoogleLinked) {
+      debugPrint("📤 설정 페이지 이탈: 최신 설정을 클라우드에 백그라운드 저장합니다.");
+      SupabaseService.uploadLocalDataToCloud();
+    }
     _authSubscription?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
-  // [최적화 핵심] 무거운 계산은 build 밖에서 수행
   Future<void> _calculateStats() async {
     if (_isCalculating) return;
     setState(() => _isCalculating = true);
-
     final wBox = Hive.box<Word>(DatabaseService.boxName);
     if (wBox.isEmpty) {
       setState(() { _progress = 0.0; _reviewWords = 0; _isCalculating = false; });
       return;
     }
-
-    // 별도 비동기 작업으로 분리하여 UI 멈춤 방지
     final Map<int, int> wordCorrectMap = {};
     int wrongCount = 0;
-    
     for (var i = 0; i < wBox.length; i++) {
       final word = wBox.getAt(i);
       if (word != null) {
-        // ID별 최대 맞춘 횟수 기록 (중복 단어 처리)
         if (!wordCorrectMap.containsKey(word.id) || word.correct_count > wordCorrectMap[word.id]!) {
           wordCorrectMap[word.id] = word.correct_count;
         }
         if (word.is_wrong_note) wrongCount++;
       }
-      if (i % 500 == 0) await Future.delayed(Duration.zero); // 숨쉴 틈 주기
+      if (i % 500 == 0) await Future.delayed(Duration.zero);
     }
-
-    final totalUnique = wordCorrectMap.length;
     final learnedCount = wordCorrectMap.values.where((c) => c > 0).length;
-
     if (mounted) {
-      setState(() {
-        _progress = totalUnique > 0 ? (learnedCount / totalUnique) * 100 : 0.0;
-        _reviewWords = wrongCount;
-        _isCalculating = false;
-      });
+      setState(() { _progress = wordCorrectMap.isEmpty ? 0.0 : (learnedCount / wordCorrectMap.length) * 100; _reviewWords = wrongCount; _isCalculating = false; });
     }
   }
 
@@ -142,9 +134,16 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
                     if (currentAuthId != null) {
                       await Hive.box(DatabaseService.sessionBoxName).put('last_synced_auth_id', currentAuthId);
                     }
+                    
+                    // [핵심] 먼저 업로드를 완벽하게 끝냅니다. (이때는 getUserProfile이 호출되지 않아야 함)
                     debugPrint("📤 로컬 데이터를 클라우드로 강제 업로드합니다...");
                     await SupabaseService.uploadLocalDataToCloud(clearFirst: true);
-                    _calculateStats(); // 업로드 후 통계 재계산
+                    
+                    // 업로드가 끝난 후에야 마이그레이션 완료를 선포합니다.
+                    SupabaseService.isMigrationComplete = true;
+                    
+                    // 이제 서버와 로컬이 같아졌으므로 안심하고 로드합니다.
+                    _calculateStats();
                     _loadUserProfile();
                   },
                   style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5B86E5), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), elevation: 0),
@@ -161,9 +160,10 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
                     if (currentAuthId != null) {
                       await Hive.box(DatabaseService.sessionBoxName).put('last_synced_auth_id', currentAuthId);
                     }
-                    debugPrint("📥 클라우드 데이터를 로컬로 내려받습니다...");
+                    // [핵심] 마이그레이션 완료를 선포하고 클라우드에서 긁어옴
+                    SupabaseService.isMigrationComplete = true;
                     await SupabaseService.downloadProgressFromServer();
-                    _calculateStats(); // 다운로드 후 통계 재계산
+                    _calculateStats();
                     _loadUserProfile();
                   },
                   style: OutlinedButton.styleFrom(side: const BorderSide(color: Color(0xFF5B86E5), width: 1.5), foregroundColor: const Color(0xFF5B86E5), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
@@ -188,20 +188,12 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
         final Color textColor = isDarkMode ? Colors.white : Colors.black87;
         final Color subTextColor = isDarkMode ? Colors.grey[400]! : Colors.grey[600]!;
         final Color cardColor = isDarkMode ? Colors.white.withOpacity(0.1) : Colors.white;
-
         final String rawRecLevel = sBox.get('recommended_level')?.toString() ?? '';
-        final String recommendedLevel = (rawRecLevel == '' || rawRecLevel == 'null' || rawRecLevel == '기록 없음') 
-            ? '실력 진단 전' 
-            : rawRecLevel;
+        final String recommendedLevel = (rawRecLevel == '' || rawRecLevel == 'null' || rawRecLevel == '기록 없음') ? '실력 진단 전' : rawRecLevel;
 
         return Scaffold(
           backgroundColor: Colors.transparent,
-          appBar: AppBar(
-            title: Text('설정 및 학습 통계', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: textColor)),
-            backgroundColor: Colors.transparent,
-            elevation: 0,
-            centerTitle: true,
-          ),
+          appBar: AppBar(title: Text('설정 및 학습 통계', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: textColor)), backgroundColor: Colors.transparent, elevation: 0, centerTitle: true),
           body: SafeArea(
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(24),
@@ -232,7 +224,6 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
     );
   }
 
-  // UI 헬퍼 메서드들
   Widget _buildSectionTitle(String title, Color color) => Text(title, style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: color));
 
   Widget _buildProfileCard(Color cardColor, bool isDarkMode, Color textColor, Color subTextColor) {
@@ -261,7 +252,13 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
             subtitle: Text('눈이 편안한 어두운 화면', style: TextStyle(fontSize: 12, color: subTextColor)),
             value: isDarkMode,
             activeColor: const Color(0xFF5B86E5),
-            onChanged: (val) => sBox.put('dark_mode', val),
+            onChanged: (val) {
+              sBox.put('dark_mode', val);
+              // [즉시 반영] 설정 변경 시 서버에 바로 보고
+              if (SupabaseService.isGoogleLinked) {
+                SupabaseService.uploadLocalDataToCloud();
+              }
+            },
             contentPadding: EdgeInsets.zero,
             secondary: Icon(isDarkMode ? Icons.dark_mode_rounded : Icons.light_mode_rounded, color: const Color(0xFF5B86E5)),
           ),
@@ -269,17 +266,43 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
           ListTile(
             title: Text('테마 설정', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: textColor)),
             subtitle: Text('계절별 맞춤 테마 적용', style: TextStyle(fontSize: 12, color: subTextColor)),
-            trailing: DropdownButton<String>(
-              value: sBox.get('app_theme', defaultValue: 'auto'),
-              underline: const SizedBox(),
-              items: const [
-                DropdownMenuItem(value: 'auto', child: Text('자동 (계절)')),
-                DropdownMenuItem(value: 'spring', child: Text('봄')),
-                DropdownMenuItem(value: 'summer', child: Text('여름')),
-                DropdownMenuItem(value: 'autumn', child: Text('가을')),
-                DropdownMenuItem(value: 'winter', child: Text('겨울')),
+            trailing: PopupMenuButton<String>(
+              initialValue: sBox.get('app_theme', defaultValue: 'auto'),
+              offset: const Offset(0, 45), // 버튼 바로 아래에 메뉴가 뜨도록 위치 조정
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              onSelected: (val) {
+                sBox.put('app_theme', val);
+                // [즉시 반영] 설정 변경 시 서버에 바로 보고
+                if (SupabaseService.isGoogleLinked) {
+                  SupabaseService.uploadLocalDataToCloud();
+                }
+              },
+              itemBuilder: (context) => [
+                const PopupMenuItem(value: 'auto', child: Text('자동', style: TextStyle(fontSize: 14))),
+                const PopupMenuItem(value: 'spring', child: Text('봄', style: TextStyle(fontSize: 14))),
+                const PopupMenuItem(value: 'summer', child: Text('여름', style: TextStyle(fontSize: 14))),
+                const PopupMenuItem(value: 'autumn', child: Text('가을', style: TextStyle(fontSize: 14))),
+                const PopupMenuItem(value: 'winter', child: Text('겨울', style: TextStyle(fontSize: 14))),
               ],
-              onChanged: (val) => sBox.put('app_theme', val),
+              child: Container(
+                width: 90,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: isDarkMode ? Colors.white.withOpacity(0.05) : Colors.grey[100],
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: isDarkMode ? Colors.white10 : Colors.grey[300]!, width: 0.5),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      _getThemeName(sBox.get('app_theme', defaultValue: 'auto')),
+                      style: TextStyle(fontSize: 14, color: textColor),
+                    ),
+                    Icon(Icons.keyboard_arrow_down_rounded, size: 18, color: textColor.withOpacity(0.5)),
+                  ],
+                ),
+              ),
             ),
             contentPadding: EdgeInsets.zero,
             leading: const Icon(Icons.palette_rounded, color: Color(0xFF5B86E5)),
@@ -315,6 +338,7 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
           else _showResetDialog(context, '로그아웃', '정말 로그아웃 하시겠습니까?', () async { 
             await sBox.delete('last_synced_auth_id');
             await SupabaseService.signOut(); 
+            SupabaseService.isMigrationComplete = false; // 로그아웃 시 마이그레이션 상태 초기화
             _calculateStats();
             _loadUserProfile(); 
           });
@@ -367,6 +391,16 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
         child: Row(children: [Icon(icon, color: color ?? (isDarkMode ? Colors.white70 : Colors.black54), size: 24), const SizedBox(width: 16), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title, style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: textColor)), Text(subtitle, style: TextStyle(fontSize: 12, color: isDarkMode ? Colors.white38 : Colors.grey[500]))])), const Icon(Icons.chevron_right_rounded, color: Colors.grey, size: 20)]),
       ),
     );
+  }
+
+  String _getThemeName(String theme) {
+    switch (theme) {
+      case 'spring': return '봄';
+      case 'summer': return '여름';
+      case 'autumn': return '가을';
+      case 'winter': return '겨울';
+      default: return '자동';
+    }
   }
 
   void _showResetDialog(BuildContext context, String title, String content, VoidCallback onConfirm) {
@@ -431,8 +465,8 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
         title: const Text('기기 ID 충돌 감지', style: TextStyle(fontWeight: FontWeight.bold)),
         content: const Text('이 계정으로 이미 다른 기기에서 학습한 기록이 있습니다.\n\n현재 기기의 데이터를 유지하시겠습니까, 아니면 클라우드 데이터를 불러오시겠습니까?'),
         actions: [
-          TextButton(onPressed: () async { Navigator.pop(context); await SupabaseService.uploadLocalDataToCloud(clearFirst: true); SupabaseService.isMigrationComplete = true; _calculateStats(); _loadUserProfile(); }, child: const Text('현재 기기 데이터 유지')),
-          ElevatedButton(onPressed: () async { Navigator.pop(context); await SupabaseService.downloadProgressFromServer(); SupabaseService.isMigrationComplete = true; _calculateStats(); _loadUserProfile(); }, style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5B86E5), foregroundColor: Colors.white), child: const Text('클라우드 데이터 불러오기')),
+          TextButton(onPressed: () async { Navigator.pop(context); SupabaseService.isMigrationComplete = true; await SupabaseService.uploadLocalDataToCloud(clearFirst: true); _calculateStats(); _loadUserProfile(); }, child: const Text('현재 기기 데이터 유지')),
+          ElevatedButton(onPressed: () async { Navigator.pop(context); SupabaseService.isMigrationComplete = true; await SupabaseService.downloadProgressFromServer(); _calculateStats(); _loadUserProfile(); }, style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5B86E5), foregroundColor: Colors.white), child: const Text('클라우드 데이터 불러오기')),
         ],
       ),
     );

@@ -112,33 +112,41 @@ class SupabaseService {
       await box.put('user_nickname', '냥냥이${DateTime.now().millisecondsSinceEpoch % 1000}');
     }
 
+    // 1. [로그인 안 됨] 무조건 로컬 데이터 반환
     if (!isGoogleLinked || currentUser == null) {
       _isAdmin = false;
       return {
         'id': stableId, 
         'nickname': box.get('user_nickname'), 
         'recommended_level': box.get('recommended_level'),
-        'is_dark_mode': box.get('dark_mode', defaultValue: false),
+        'is_dark_mode': box.get('dark_mode') == true || box.get('dark_mode').toString() == 'true',
         'app_theme': box.get('app_theme', defaultValue: 'auto'),
       };
     }
 
+    // 2. [로그인 됨] 서버에서 프로필 정보만 '조회'합니다. (로컬 덮어쓰기 절대 금지)
     final existingProfile = await fetchRemoteProfile();
     if (existingProfile != null) {
       _isAdmin = existingProfile['is_admin'] == true || existingProfile['is_admin'] == 'true';
-      if (!isMigrationComplete && existingProfile['id']?.toString() != stableId) {
-        debugPrint("🧩 기기 ID와 서버 프로필 ID가 달라 마이그레이션이 필요합니다.");
+      
+      // [중요] 마이그레이션 확인 절차(팝업)를 거치지 않았다면, 
+      // UI에는 로컬 데이터를 먼저 보여주어 팝업 선택을 방해하지 않습니다.
+      final String? lastSyncedId = box.get('last_synced_auth_id');
+      if (lastSyncedId != currentUser.id) {
         return {
           'id': stableId, 
           'nickname': box.get('user_nickname'), 
           'recommended_level': box.get('recommended_level'),
-          'is_dark_mode': box.get('dark_mode', defaultValue: false),
+          'is_dark_mode': box.get('dark_mode') == true || box.get('dark_mode').toString() == 'true',
           'app_theme': box.get('app_theme', defaultValue: 'auto'),
         };
       }
+
+      // 이미 동기화가 끝난 계정이라면 서버 데이터를 반환 (이미 동기화 버튼에서 로컬에 썼을 것임)
       return existingProfile; 
     }
 
+    // 3. [신규 유저]
     final String gName = currentUser.userMetadata?['full_name'] ?? currentUser.userMetadata?['name'] ?? '구글 유저';
     final String initialNickname = box.get('user_nickname') ?? gName;
     
@@ -147,10 +155,9 @@ class SupabaseService {
       'nickname': initialNickname,
       'auth_id': currentUser.id,
       'recommended_level': box.get('recommended_level'),
-      'is_dark_mode': box.get('dark_mode', defaultValue: false),
+      'is_dark_mode': box.get('dark_mode') == true || box.get('dark_mode').toString() == 'true',
       'app_theme': box.get('app_theme', defaultValue: 'auto'),
     };
-    debugPrint("✨ 새로운 서버 프로필을 생성합니다: $initialNickname");
     await _client.from('profiles').upsert(newProfile, onConflict: 'id');
     return newProfile;
   }
@@ -165,14 +172,15 @@ class SupabaseService {
       
       final profile = await fetchRemoteProfile();
       if (profile != null) {
-        if (profile['nickname'] != null) await box.put('user_nickname', profile['nickname']);
-        if (profile['recommended_level'] != null) await box.put('recommended_level', profile['recommended_level']);
-        if (profile['is_dark_mode'] != null) await box.put('dark_mode', profile['is_dark_mode']);
-        if (profile['app_theme'] != null) await box.put('app_theme', profile['app_theme']);
+        // [명시적 저장] 사용자가 '다운로드'를 원했을 때만 여기서 저장합니다.
+        await box.put('user_nickname', profile['nickname']);
+        await box.put('recommended_level', profile['recommended_level']);
+        await box.put('dark_mode', profile['is_dark_mode'] == true || profile['is_dark_mode']?.toString() == 'true');
+        await box.put('app_theme', profile['app_theme'] ?? 'auto');
       }
 
       final List<dynamic> response = await _client.from('user_progress').select().eq('user_id', sid);
-      debugPrint("📥 서버에서 ${response.length}개의 학습 기록을 성공적으로 가져왔습니다.");
+      debugPrint("📥 서버에서 ${response.length}개의 학습 기록을 수신했습니다.");
       
       final wordBox = Hive.box<Word>(DatabaseService.boxName);
       for (var row in response) {
@@ -197,25 +205,28 @@ class SupabaseService {
           await word.save();
         }
       }
-      debugPrint("✅ 클라우드 데이터 병합 및 로컬 저장 완료!");
+      debugPrint("✅ 클라우드 데이터 병합 완료!");
     });
   }
 
   static Future<void> uploadLocalDataToCloud({bool clearFirst = false}) async {
-    if (!isGoogleLinked) return;
+    final currentUser = _client.auth.currentUser;
+    if (currentUser == null) return;
+
     await _safeRequest(() async {
       final sid = stableId;
       final box = Hive.box(DatabaseService.sessionBoxName);
 
+      debugPrint("📤 로컬 데이터를 서버로 강제 주입합니다... (clearFirst: $clearFirst)");
+
       await _client.from('profiles').update({
         'nickname': box.get('user_nickname'),
         'recommended_level': box.get('recommended_level'),
-        'is_dark_mode': box.get('dark_mode', defaultValue: false),
+        'is_dark_mode': box.get('dark_mode') == true || box.get('dark_mode').toString() == 'true',
         'app_theme': box.get('app_theme', defaultValue: 'auto'),
-      }).eq('id', sid);
+      }).eq('auth_id', currentUser.id);
 
       if (clearFirst) {
-        debugPrint("🧹 서버의 기존 학습 데이터를 초기화 중...");
         await _client.from('user_progress').delete().eq('user_id', sid);
       }
 
@@ -239,13 +250,12 @@ class SupabaseService {
           'next_review_at': word.next_review_at?.toIso8601String(),
         }).toList();
 
-        debugPrint("📤 ${data.length}개의 로컬 기록을 서버로 업로드합니다...");
         for (var i = 0; i < data.length; i += 500) {
           final end = (i + 500 < data.length) ? i + 500 : data.length;
           await _client.from('user_progress').upsert(data.sublist(i, end), onConflict: 'user_id, word_id');
         }
       }
-      debugPrint("🚀 서버 데이터 동기화(업로드) 완료!");
+      debugPrint("🚀 로컬 데이터가 서버를 점령했습니다! 동기화 완료.");
     });
   }
 
@@ -323,9 +333,12 @@ class SupabaseService {
   static Future<void> updateNickname(String newNickname) async {
     await Hive.box(DatabaseService.sessionBoxName).put('user_nickname', newNickname);
     if (isGoogleLinked) {
-      await _safeRequest(() async {
-        await _client.from('profiles').update({'nickname': newNickname}).eq('id', stableId);
-      });
+      final currentUser = _client.auth.currentUser;
+      if (currentUser != null) {
+        await _safeRequest(() async {
+          await _client.from('profiles').update({'nickname': newNickname}).eq('auth_id', currentUser.id);
+        });
+      }
     }
     debugPrint("👤 닉네임이 '$newNickname'(으)로 변경되었습니다.");
   }
@@ -333,9 +346,12 @@ class SupabaseService {
   static Future<void> resetRecommendedLevel() async {
     await Hive.box(DatabaseService.sessionBoxName).delete('recommended_level');
     if (isGoogleLinked) {
-      await _safeRequest(() async {
-        await _client.from('profiles').update({'recommended_level': null}).eq('id', stableId);
-      });
+      final currentUser = _client.auth.currentUser;
+      if (currentUser != null) {
+        await _safeRequest(() async {
+          await _client.from('profiles').update({'recommended_level': null}).eq('auth_id', currentUser.id);
+        });
+      }
     }
     debugPrint("🔄 추천 레벨 정보가 초기화되었습니다.");
   }
@@ -345,7 +361,10 @@ class SupabaseService {
       await _safeRequest(() async {
         await _client.from('user_progress').delete().eq('user_id', stableId);
         await _client.from('study_logs').delete().eq('user_id', stableId);
-        await _client.from('profiles').update({'recommended_level': null}).eq('id', stableId);
+        final currentUser = _client.auth.currentUser;
+        if (currentUser != null) {
+          await _client.from('profiles').update({'recommended_level': null}).eq('auth_id', currentUser.id);
+        }
       });
     }
     debugPrint("🗑️ 모든 서버 학습 데이터가 삭제되었습니다.");
