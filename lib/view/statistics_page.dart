@@ -432,6 +432,57 @@ class _StatisticsPageState extends State<StatisticsPage>
                       ),
 
                       const SizedBox(height: 32),
+                      _buildSectionTitle('화면 설정', textColor),
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: cardColor,
+                          borderRadius: BorderRadius.circular(20),
+                          boxShadow: isDarkMode ? [] : [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.03),
+                              blurRadius: 10,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          children: [
+                            SwitchListTile(
+                              title: Text('다크 모드', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: textColor)),
+                              subtitle: Text('눈이 편안한 어두운 화면', style: TextStyle(fontSize: 12, color: subTextColor)),
+                              value: isDarkMode,
+                              activeColor: const Color(0xFF5B86E5),
+                              onChanged: (val) => sBox.put('dark_mode', val),
+                              contentPadding: EdgeInsets.zero,
+                              secondary: Icon(isDarkMode ? Icons.dark_mode_rounded : Icons.light_mode_rounded, color: const Color(0xFF5B86E5)),
+                            ),
+                            Divider(height: 1, color: isDarkMode ? Colors.white10 : Colors.grey[200]),
+                            ListTile(
+                              title: Text('테마 설정', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: textColor)),
+                              subtitle: Text('계절별 맞춤 테마 적용', style: TextStyle(fontSize: 12, color: subTextColor)),
+                              trailing: DropdownButton<String>(
+                                value: sBox.get('app_theme', defaultValue: 'auto'),
+                                underline: const SizedBox(),
+                                dropdownColor: isDarkMode ? const Color(0xFF2D3436) : Colors.white,
+                                items: const [
+                                  DropdownMenuItem(value: 'auto', child: Text('자동 (계절)')),
+                                  DropdownMenuItem(value: 'spring', child: Text('봄')),
+                                  DropdownMenuItem(value: 'summer', child: Text('여름')),
+                                  DropdownMenuItem(value: 'autumn', child: Text('가을')),
+                                  DropdownMenuItem(value: 'winter', child: Text('겨울')),
+                                ],
+                                onChanged: (val) => sBox.put('app_theme', val),
+                              ),
+                              contentPadding: EdgeInsets.zero,
+                              leading: const Icon(Icons.palette_rounded, color: Color(0xFF5B86E5)),
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      const SizedBox(height: 32),
                       _buildSectionTitle('나의 학습 현황', textColor),
                       const SizedBox(height: 12),
                       Container(

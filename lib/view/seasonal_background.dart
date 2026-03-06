@@ -13,14 +13,6 @@ class SeasonalBackground extends StatelessWidget {
   });
 
   Map<String, dynamic> _getSeasonalTheme() {
-    if (isDarkMode) {
-      return {
-        'colors': [const Color(0xFF1A1C2C), const Color(0xFF2D3436)],
-        'icon': Icons.nights_stay_rounded,
-        'iconColor': Colors.white.withOpacity(0.05),
-      };
-    }
-
     int month = DateTime.now().month;
     String target = appTheme;
     if (target == 'auto') {
@@ -28,6 +20,36 @@ class SeasonalBackground extends StatelessWidget {
       else if (month >= 6 && month <= 8) target = 'summer';
       else if (month >= 9 && month <= 11) target = 'autumn';
       else target = 'winter';
+    }
+
+    if (isDarkMode) {
+      switch (target) {
+        case 'spring':
+          return {
+            'colors': [const Color(0xFF2D1B22), const Color(0xFF1A1C2C)],
+            'icon': Icons.local_florist_rounded,
+            'iconColor': Colors.pink.withOpacity(0.05),
+          };
+        case 'summer':
+          return {
+            'colors': [const Color(0xFF1B2D2D), const Color(0xFF1A1C2C)],
+            'icon': Icons.wb_sunny_rounded,
+            'iconColor': Colors.blue.withOpacity(0.05),
+          };
+        case 'autumn':
+          return {
+            'colors': [const Color(0xFF2D241B), const Color(0xFF1A1C2C)],
+            'icon': Icons.eco_rounded,
+            'iconColor': Colors.orange.withOpacity(0.05),
+          };
+        case 'winter':
+        default:
+          return {
+            'colors': [const Color(0xFF1B222D), const Color(0xFF1A1C2C)],
+            'icon': Icons.ac_unit_rounded,
+            'iconColor': Colors.blueGrey.withOpacity(0.05),
+          };
+      }
     }
 
     switch (target) {

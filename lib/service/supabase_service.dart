@@ -52,8 +52,44 @@ class SupabaseService {
 
   static Future<void> refreshUser() async {
     try {
-      await _client.auth.getUser();
-    } catch (e) {}
+      final session = _client.auth.currentSession;
+      if (session == null) return;
+      
+      // 토큰 만료가 임박했거나 만료된 경우 강제 갱신 시도
+      if (session.isExpired) {
+        debugPrint("🔄 세션 만료됨. 토큰 갱신 시도 중...");
+        await _client.auth.refreshSession();
+      } else {
+        await _client.auth.getUser();
+      }
+    } catch (e) {
+      debugPrint("⚠️ 세션 갱신 실패: $e");
+      // 리프레시 토큰까지 만료된 경우 로그아웃 처리하여 깨끗한 상태로 만듦
+      if (e.toString().contains('refresh_token_not_found') || e.toString().contains('Invalid Refresh Token')) {
+        await signOut();
+      }
+    }
+  }
+
+  /// [신규] 모든 Supabase 쿼리 실행 전 세션 체크 및 에러 핸들링을 위한 래퍼
+  static Future<T?> _safeRequest<T>(Future<T> Function() request) async {
+    try {
+      await refreshUser(); // 요청 전 세션 체크
+      return await request();
+    } catch (e) {
+      if (e is PostgrestException && (e.code == 'pgrst303' || e.message.contains('JWT expired'))) {
+        debugPrint("🔑 JWT 만료 감지 (pgrst303). 세션 재갱신 후 재시도...");
+        try {
+          await _client.auth.refreshSession();
+          return await request(); // 1회 재시도
+        } catch (retryError) {
+          debugPrint("❌ 세션 재갱신 후에도 요청 실패: $retryError");
+          return null;
+        }
+      }
+      debugPrint("❌ Supabase 요청 에러: $e");
+      return null;
+    }
   }
 
   static Stream<AuthState> get authStateChanges => _client.auth.onAuthStateChange;
@@ -63,11 +99,15 @@ class SupabaseService {
   static Future<Map<String, dynamic>?> fetchRemoteProfile() async {
     final currentUser = _client.auth.currentUser;
     if (currentUser == null) return null;
-    try {
-      final List<dynamic> profiles = await _client.from('profiles').select().eq('auth_id', currentUser.id).order('created_at', ascending: true);
-      if (profiles.isNotEmpty) return profiles.first;
-    } catch (e) {}
-    return null;
+    
+    return await _safeRequest(() async {
+      final List<dynamic> profiles = await _client
+          .from('profiles')
+          .select()
+          .eq('auth_id', currentUser.id)
+          .order('created_at', ascending: true);
+      return profiles.isNotEmpty ? profiles.first : null;
+    });
   }
 
   static Future<void> syncStableIdWithServer(String serverSid) async {

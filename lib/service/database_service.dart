@@ -91,18 +91,7 @@ class DatabaseService {
   static Future<void> loadJsonToHive(int level) async {
     var box = Hive.box<Word>(boxName);
 
-    // 해당 레벨의 단어 개수를 확인
-    int existingCount = box.values.where((w) => w.level.toString() == level.toString()).length;
-    
-    // 히라가나/가타카나는 개수가 적으므로 체크 기준 완화 (기본 46자 이상이면 로드된 것으로 간주)
-    int threshold = (level >= 11) ? 40 : 100;
-    
-    if (existingCount >= threshold) {
-      debugPrint("✅ Level $level 데이터가 이미 존재합니다. (개수: $existingCount)");
-      return;
-    }
-
-    debugPrint("⏳ Level $level 데이터를 로드 중...");
+    debugPrint("⏳ Level $level 데이터 로드 확인 중...");
     try {
       String fileName;
       if (level == 11) {
@@ -118,8 +107,10 @@ class DatabaseService {
       // 무거운 연산을 별도 Isolate에서 수행 (메인 스레드 프리징 방지)
       final Map<String, Word> wordMap = await compute(_parseWords, {'jsonString': response, 'level': level});
       
+      // 이미 데이터가 일부 있더라도, JSON에 있는 데이터는 최신 버전으로 갱신(또는 채워넣기)
+      // putAll을 사용하면 key가 겹칠 경우 덮어쓰므로 데이터 무결성이 보장됨
       await box.putAll(wordMap);
-      debugPrint("✅ Level $level 로드 완료! (총 ${wordMap.length}단어)");
+      debugPrint("✅ Level $level 로드 및 갱신 완료! (총 ${wordMap.length}단어)");
     } catch (e) {
       debugPrint("❌ 데이터 로드 에러 (Level $level): $e");
     }
