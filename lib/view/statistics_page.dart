@@ -320,7 +320,7 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
           });
         }),
         const SizedBox(height: 12),
-        _buildManagementCard(context, title: '실력 진단 초기화', subtitle: '추천 레벨 기록을 삭제합니다.', icon: Icons.refresh_rounded, color: const Color(0xFF5B86E5), isDarkMode: isDarkMode, onTap: () => _showResetDialog(context, '실력 진단 초기화', '추천 레벨 기록을 삭제하시겠습니까?\n홈에서 다시 테스트를 진행할 수 있습니다.', () async {
+        _buildManagementCard(context, title: '실력 진단 초기화', subtitle: '추천 레벨 기록을 삭제합니다.', icon: Icons.refresh_rounded, color: Colors.orangeAccent, isDarkMode: isDarkMode, onTap: () => _showResetDialog(context, '실력 진단 초기화', '추천 레벨 기록을 삭제하시겠습니까?\n홈에서 다시 테스트를 진행할 수 있습니다.', () async {
           await SupabaseService.resetRecommendedLevel();
           _loadUserProfile();
         })),
