@@ -17,23 +17,28 @@ class WordAdapter extends TypeAdapter<Word> {
       for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
     };
     return Word(
-      id: fields[0] as int,
-      kanji: fields[1] as String,
-      kana: fields[2] as String,
-      meaning: fields[3] as String,
-      level: fields[4] as int,
-      koreanPronunciation: fields[5] as String,
-      correctCount: fields[6] as int,
-      incorrectCount: fields[7] as int,
-      isMemorized: fields[8] as bool,
-      isBookmarked: fields[9] as bool,
+      id: int.tryParse(fields[0]?.toString() ?? '0') ?? 0,
+      kanji: fields[1]?.toString() ?? '',
+      kana: fields[2]?.toString() ?? '',
+      koreanPronunciation: fields[3]?.toString() ?? '',
+      meaning: fields[4]?.toString() ?? '',
+      level: int.tryParse(fields[5]?.toString() ?? '0') ?? 0,
+      example_sentence: fields[13]?.toString(),
+      correct_count: int.tryParse(fields[6]?.toString() ?? '0') ?? 0,
+      incorrect_count: int.tryParse(fields[7]?.toString() ?? '0') ?? 0,
+      is_memorized: fields[8] == true || fields[8]?.toString() == 'true',
+      is_bookmarked: fields[9] == true || fields[9]?.toString() == 'true',
+      srs_stage: int.tryParse(fields[10]?.toString() ?? '0') ?? 0,
+      next_review_at: fields[11] is DateTime ? fields[11] as DateTime : (fields[11] != null ? DateTime.tryParse(fields[11].toString()) : null),
+      is_wrong_note: fields[12] == true || fields[12]?.toString() == 'true',
+      status: fields[14]?.toString() ?? 'unlearned',
     );
   }
 
   @override
   void write(BinaryWriter writer, Word obj) {
     writer
-      ..writeByte(10)
+      ..writeByte(15)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -41,19 +46,29 @@ class WordAdapter extends TypeAdapter<Word> {
       ..writeByte(2)
       ..write(obj.kana)
       ..writeByte(3)
-      ..write(obj.meaning)
-      ..writeByte(4)
-      ..write(obj.level)
-      ..writeByte(5)
       ..write(obj.koreanPronunciation)
+      ..writeByte(4)
+      ..write(obj.meaning)
+      ..writeByte(5)
+      ..write(obj.level)
+      ..writeByte(13)
+      ..write(obj.example_sentence)
       ..writeByte(6)
-      ..write(obj.correctCount)
+      ..write(obj.correct_count)
       ..writeByte(7)
-      ..write(obj.incorrectCount)
+      ..write(obj.incorrect_count)
       ..writeByte(8)
-      ..write(obj.isMemorized)
+      ..write(obj.is_memorized)
       ..writeByte(9)
-      ..write(obj.isBookmarked);
+      ..write(obj.is_bookmarked)
+      ..writeByte(10)
+      ..write(obj.srs_stage)
+      ..writeByte(11)
+      ..write(obj.next_review_at)
+      ..writeByte(12)
+      ..write(obj.is_wrong_note)
+      ..writeByte(14)
+      ..write(obj.status);
   }
 
   @override

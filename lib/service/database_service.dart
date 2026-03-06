@@ -17,46 +17,38 @@ class DatabaseService {
     await Hive.openBox<Word>(boxName);
     final sessionBox = await Hive.openBox(sessionBoxName);
 
-    // 구버전 데이터 보정: 'N5 미만' 기록이 있다면 'N5'로 변경
+    final dynamic recLevel = sessionBox.get('recommended_level');
+    if (recLevel != null && recLevel is! String) {
+      await sessionBox.put('recommended_level', recLevel.toString());
+    }
+
     if (sessionBox.get('recommended_level') == 'N5 미만') {
       await sessionBox.put('recommended_level', 'N5');
     }
+    debugPrint("📦 로컬 데이터베이스(Hive) 초기화 완료");
   }
 
-  /// 서버와 단어 마스터 데이터 동기화
   static Future<void> syncMasterData() async {
     final sessionBox = Hive.box(sessionBoxName);
     final wordsBox = Hive.box<Word>(boxName);
 
     try {
-      // 1. 서버 설정 가져오기
       final config = await SupabaseService.getAppConfig();
       if (config == null) return;
 
-      final double remoteVersion = double.parse(((config['data_version'] is int) 
-          ? (config['data_version'] as int).toDouble() 
-          : (config['data_version'] as double? ?? 0.0)).toStringAsFixed(1));
-          
-      final dynamic localRawVersion = sessionBox.get('master_data_version', defaultValue: 0.0);
-      final double localVersion = double.parse(((localRawVersion is int) ? localRawVersion.toDouble() : (localRawVersion as double? ?? 0.0)).toStringAsFixed(1));
+      final double remoteVersion = double.tryParse(config['data_version']?.toString() ?? '0.0') ?? 0.0;
+      final double localVersion = double.tryParse(sessionBox.get('master_data_version', defaultValue: 0.0).toString()) ?? 0.0;
 
-      debugPrint("📡 데이터 버전 체크: 로컬($localVersion) vs 서버($remoteVersion)");
-
-      // 2. 버전이 다르면 업데이트 시작
       if (remoteVersion > localVersion) {
-        debugPrint("🔄 새 버전 발견! 단어 동기화 시작...");
-        
+        debugPrint("🆕 새로운 단어 데이터 버전 발견! (v$remoteVersion) 업데이트를 시작합니다...");
         final List<Word> remoteWords = await SupabaseService.fetchAllWords();
         if (remoteWords.isEmpty) return;
 
-        // 3. 기존 학습 데이터 보존하며 업데이트
         for (var remoteWord in remoteWords) {
-          // DatabaseService에서 사용하는 키 형식: '${level}_${id}'
           final String key = '${remoteWord.level}_${remoteWord.id}';
           final localWord = wordsBox.get(key);
           
           if (localWord != null) {
-            // 이미 있는 단어라면 마스터 정보만 업데이트 (학습 기록 유지)
             final updatedWord = Word(
               id: remoteWord.id,
               kanji: remoteWord.kanji,
@@ -64,91 +56,74 @@ class DatabaseService {
               koreanPronunciation: remoteWord.koreanPronunciation,
               meaning: remoteWord.meaning,
               level: remoteWord.level,
-              isBookmarked: localWord.isBookmarked,
-              correctCount: localWord.correctCount,
-              incorrectCount: localWord.incorrectCount,
-              isMemorized: localWord.isMemorized,
-              srsStage: localWord.srsStage,
-              nextReviewDate: localWord.nextReviewDate,
+              example_sentence: remoteWord.example_sentence,
+              is_bookmarked: localWord.is_bookmarked,
+              correct_count: localWord.correct_count,
+              incorrect_count: localWord.incorrect_count,
+              is_memorized: localWord.is_memorized,
+              srs_stage: localWord.srs_stage,
+              next_review_at: localWord.next_review_at,
+              is_wrong_note: localWord.is_wrong_note,
+              status: localWord.status,
             );
             await wordsBox.put(key, updatedWord);
           } else {
-            // 새 단어라면 추가 (새 단어의 키 생성)
             await wordsBox.put(key, remoteWord);
           }
         }
-
-        // 4. 로컬 버전 갱신
         await sessionBox.put('master_data_version', remoteVersion);
-        debugPrint("✅ 단어 동기화 완료 (버전 $remoteVersion)");
+        debugPrint("✅ 단어 마스터 데이터 업데이트 완료 (v$remoteVersion)");
+      } else {
+        debugPrint("✅ 최신 버전의 단어 데이터를 사용 중입니다.");
       }
     } catch (e) {
-      debugPrint("❌ 동기화 중 오류 발생: $e");
+      debugPrint("❌ 단어 데이터 동기화 중 오류 발생: $e");
     }
   }
 
-  // 앱 최초 실행 시 JSON 데이터를 Hive DB로 옮기는 함수
   static Future<void> loadJsonToHive(int level) async {
-    var box = Hive.box<Word>(boxName);
+    final sessionBox = Hive.box(sessionBoxName);
+    if (sessionBox.get('level_${level}_loaded', defaultValue: false) == true) {
+      return;
+    }
 
-    debugPrint("⏳ Level $level 데이터 로드 확인 중...");
+    var box = Hive.box<Word>(boxName);
     try {
+      debugPrint("⏳ Level $level 최초 데이터 로드 중...");
       String fileName;
-      if (level == 11) {
-        fileName = 'hiragana.json';
-      } else if (level == 12) {
-        fileName = 'katakana.json';
-      } else {
-        fileName = 'n$level.json';
-      }
+      if (level == 11) fileName = 'hiragana.json';
+      else if (level == 12) fileName = 'katakana.json';
+      else fileName = 'n$level.json';
 
       final String response = await rootBundle.loadString('assets/data/$fileName');
-      
-      // 무거운 연산을 별도 Isolate에서 수행 (메인 스레드 프리징 방지)
       final Map<String, Word> wordMap = await compute(_parseWords, {'jsonString': response, 'level': level});
-      
-      // 이미 데이터가 일부 있더라도, JSON에 있는 데이터는 최신 버전으로 갱신(또는 채워넣기)
-      // putAll을 사용하면 key가 겹칠 경우 덮어쓰므로 데이터 무결성이 보장됨
       await box.putAll(wordMap);
-      debugPrint("✅ Level $level 로드 및 갱신 완료! (총 ${wordMap.length}단어)");
+      
+      await sessionBox.put('level_${level}_loaded', true);
+      debugPrint("✅ Level $level 로드 성공!");
     } catch (e) {
-      debugPrint("❌ 데이터 로드 에러 (Level $level): $e");
+      debugPrint("❌ Level $level 데이터 로드 실패: $e");
     }
   }
 
-  // Isolate에서 실행될 파싱 함수
   static Map<String, Word> _parseWords(Map<String, dynamic> params) {
     final String jsonString = params['jsonString'];
     final int level = params['level'];
-    
     final Map<String, dynamic> data = json.decode(jsonString);
     final List<dynamic> vocabulary = data['vocabulary'];
 
     Map<String, Word> wordMap = {};
     for (var item in vocabulary) {
-      // JSON 데이터를 Word 객체로 변환
-      final word = Word.fromJson(item);
-      final fixedWord = Word(
-        id: word.id,
-        kanji: word.kanji,
-        kana: word.kana,
-        meaning: word.meaning,
-        level: level,
-        koreanPronunciation: word.koreanPronunciation,
-      );
-      wordMap['${level}_${fixedWord.id}'] = fixedWord;
+      final word = Word.fromJson(item, level: level);
+      wordMap['${level}_${word.id}'] = word;
     }
     return wordMap;
   }
 
-  static bool needsInitialLoading() {
-    var box = Hive.box<Word>(boxName);
-    return box.isEmpty;
-  }
+  static bool needsInitialLoading() => Hive.box<Word>(boxName).isEmpty;
 
   static List<Word> getWordsByLevel(int level) {
     var box = Hive.box<Word>(boxName);
-    // 타입 불일치 방지를 위해 문자열로 변환하여 비교
     return box.values.where((w) => w.level.toString() == level.toString()).toList();
   }
 }

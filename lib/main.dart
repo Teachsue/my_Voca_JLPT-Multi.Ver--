@@ -35,22 +35,24 @@ void main() async {
 
     runApp(const MyApp());
 
-    // --- 비동기 백그라운드 작업 (앱 실행 후 조용히 진행) ---
+    // --- 비동기 백그라운드 작업 (랙 방지를 위해 지연 실행) ---
     Future.microtask(() async {
       try {
-        // [수정] 익명 로그인을 제거하여 비로그인 유저는 서버에 접속하지 않음
-        
-        // 1. 로컬 데이터 로딩 (최초 실행 시에만 작동)
+        // 1. 로컬 데이터 로딩 (이미 로드되었다면 0.01초 만에 끝남)
         for (int i = 1; i <= 5; i++) {
           await DatabaseService.loadJsonToHive(i);
         }
         await DatabaseService.loadJsonToHive(11);
         await DatabaseService.loadJsonToHive(12);
         
-        // 3. 서버와 단어 마스터 데이터 동기화
-        await DatabaseService.syncMasterData();
+        // 2. [최적화] 서버 동기화는 앱이 완전히 켜지고 3초 뒤에 조용히 진행
+        Future.delayed(const Duration(seconds: 3), () async {
+          debugPrint("📡 백그라운드 서버 동기화를 시작합니다...");
+          await DatabaseService.syncMasterData();
+        });
+
       } catch (e) {
-        debugPrint("⚠️ 백그라운드 초기화 중 오류: $e");
+        debugPrint("⚠️ 백그라운드 작업 중 오류가 발생했습니다: $e");
       }
     });
   } catch (e) {
@@ -122,8 +124,9 @@ class MyApp extends StatelessWidget {
     return ValueListenableBuilder<Box>(
       valueListenable: sessionBox.listenable(keys: ['dark_mode', 'app_theme']),
       builder: (context, box, _) {
-        final bool isDarkMode = box.get('dark_mode', defaultValue: false);
-        final String appTheme = box.get('app_theme', defaultValue: 'auto');
+        final dynamic rawDarkMode = box.get('dark_mode', defaultValue: false);
+        final bool isDarkMode = (rawDarkMode == true || rawDarkMode.toString() == 'true');
+        final String appTheme = box.get('app_theme', defaultValue: 'auto').toString();
 
         return MaterialApp(
           title: 'JLPT 단어장',

@@ -15,14 +15,18 @@ class _BookmarkPageState extends State<BookmarkPage> {
   @override
   void initState() {
     super.initState();
-    // 진입 시 서버에서 최신 북마크 상태 가져오기 (데이터 최적화를 위해 호출)
-    SupabaseService.downloadProgressFromServer();
+    // [최적화] 페이지 진입 시 해당 사용자의 최신 학습 기록만 가져옴
+    if (SupabaseService.isGoogleLinked) {
+      SupabaseService.downloadProgressFromServer();
+    }
   }
 
   @override
   void dispose() {
-    // 나갈 때 로컬의 변경사항(북마크 해제 등)을 서버에 일괄 반영
-    SupabaseService.uploadLocalDataToCloud();
+    // [최적화] 페이지를 나갈 때 변경사항을 한 번에 서버로 전송
+    if (SupabaseService.isGoogleLinked) {
+      SupabaseService.uploadLocalDataToCloud();
+    }
     super.dispose();
   }
 
@@ -45,7 +49,7 @@ class _BookmarkPageState extends State<BookmarkPage> {
         child: ValueListenableBuilder(
           valueListenable: Hive.box<Word>(DatabaseService.boxName).listenable(),
           builder: (context, Box<Word> box, _) {
-            final bookmarkedWords = box.values.where((w) => w.isBookmarked).toList();
+            final bookmarkedWords = box.values.where((w) => w.is_bookmarked).toList();
 
             if (bookmarkedWords.isEmpty) {
               return Center(
@@ -106,11 +110,13 @@ class _BookmarkPageState extends State<BookmarkPage> {
                       ),
                       IconButton(
                         icon: const Icon(Icons.bookmark_rounded, color: Colors.orangeAccent, size: 26),
-                        onPressed: () async {
-                          word.isBookmarked = false;
-                          await word.save();
-                          // 개별 변경사항도 즉시 서버에 알림
-                          await SupabaseService.upsertWordProgress(word);
+                        onPressed: () {
+                          word.is_bookmarked = false;
+                          word.save();
+                          // [최적화] 랙 방지를 위해 await 없이 서버 전송
+                          if (SupabaseService.isGoogleLinked) {
+                            SupabaseService.upsertWordProgress(word);
+                          }
                         },
                       ),
                     ],

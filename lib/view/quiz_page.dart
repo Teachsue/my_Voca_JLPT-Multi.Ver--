@@ -90,7 +90,11 @@ class _QuizPageState extends State<QuizPage> {
         body: Consumer<StudyViewModel>(
           builder: (context, viewModel, child) {
             if (viewModel.total == 0) return const Center(child: CircularProgressIndicator(color: Color(0xFF5B86E5)));
-            if (viewModel.isFinished) return _buildResultView(viewModel, isDarkMode);
+            if (viewModel.isFinished) {
+              // [최적화] 퀴즈 종료 시 한 번만 서버 동기화 호출
+              Future.microtask(() => viewModel.syncProgressToServer());
+              return _buildResultView(viewModel, isDarkMode);
+            }
             return _buildQuizView(context, viewModel, isDarkMode);
           },
         ),

@@ -209,19 +209,22 @@ class _WordListPageState extends State<WordListPage> {
               ),
               IconButton(
                 icon: Icon(
-                    word.isBookmarked
+                    word.is_bookmarked
                         ? Icons.star_rounded
                         : Icons.star_border_rounded,
-                    color: word.isBookmarked
+                    color: word.is_bookmarked
                         ? Colors.amber
                         : (isDarkMode ? Colors.white24 : Colors.grey[300])),
-                onPressed: () async {
+                onPressed: () {
                   setStateItem(() {
-                    word.isBookmarked = !word.isBookmarked;
+                    word.is_bookmarked = !word.is_bookmarked;
                     word.save();
                   });
-                  // 서버와 실시간 동기화
-                  await SupabaseService.upsertWordProgress(word);
+                  
+                  // [최적화] await를 빼서 랙을 없애고, 백그라운드에서 조용히 서버로 전송합니다.
+                  if (SupabaseService.isGoogleLinked) {
+                    SupabaseService.upsertWordProgress(word);
+                  }
                 },
               ),
             ],
