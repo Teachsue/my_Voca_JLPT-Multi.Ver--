@@ -38,7 +38,6 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
       if (data.event == AuthChangeEvent.signedIn && SupabaseService.isGoogleLinked) {
         if (currentAuthId != null && currentAuthId != lastSyncedId) {
           debugPrint("🔓 새로운 로그인 계정 확인됨. 동기화 팝업 준비 중...");
-          // 로그인 직후에는 마이그레이션 전이므로 프로필만 가볍게 로드 (Hive 덮어쓰기 없음)
           _loadUserProfile();
           Future.delayed(const Duration(milliseconds: 1200), () {
             if (mounted) _showSyncChoiceDialog();
@@ -50,9 +49,7 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
 
   @override
   void dispose() {
-    // [핵심] 설정 페이지를 나갈 때 최신 로컬 설정을 서버로 강제 동기화
     if (SupabaseService.isGoogleLinked) {
-      debugPrint("📤 설정 페이지 이탈: 최신 설정을 클라우드에 백그라운드 저장합니다.");
       SupabaseService.uploadLocalDataToCloud();
     }
     _authSubscription?.cancel();
@@ -134,15 +131,8 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
                     if (currentAuthId != null) {
                       await Hive.box(DatabaseService.sessionBoxName).put('last_synced_auth_id', currentAuthId);
                     }
-                    
-                    // [핵심] 먼저 업로드를 완벽하게 끝냅니다. (이때는 getUserProfile이 호출되지 않아야 함)
-                    debugPrint("📤 로컬 데이터를 클라우드로 강제 업로드합니다...");
                     await SupabaseService.uploadLocalDataToCloud(clearFirst: true);
-                    
-                    // 업로드가 끝난 후에야 마이그레이션 완료를 선포합니다.
                     SupabaseService.isMigrationComplete = true;
-                    
-                    // 이제 서버와 로컬이 같아졌으므로 안심하고 로드합니다.
                     _calculateStats();
                     _loadUserProfile();
                   },
@@ -160,7 +150,6 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
                     if (currentAuthId != null) {
                       await Hive.box(DatabaseService.sessionBoxName).put('last_synced_auth_id', currentAuthId);
                     }
-                    // [핵심] 마이그레이션 완료를 선포하고 클라우드에서 긁어옴
                     SupabaseService.isMigrationComplete = true;
                     await SupabaseService.downloadProgressFromServer();
                     _calculateStats();
@@ -254,7 +243,6 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
             activeColor: const Color(0xFF5B86E5),
             onChanged: (val) {
               sBox.put('dark_mode', val);
-              // [즉시 반영] 설정 변경 시 서버에 바로 보고
               if (SupabaseService.isGoogleLinked) {
                 SupabaseService.uploadLocalDataToCloud();
               }
@@ -268,11 +256,10 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
             subtitle: Text('계절별 맞춤 테마 적용', style: TextStyle(fontSize: 12, color: subTextColor)),
             trailing: PopupMenuButton<String>(
               initialValue: sBox.get('app_theme', defaultValue: 'auto'),
-              offset: const Offset(0, 45), // 버튼 바로 아래에 메뉴가 뜨도록 위치 조정
+              offset: const Offset(0, 45),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               onSelected: (val) {
                 sBox.put('app_theme', val);
-                // [즉시 반영] 설정 변경 시 서버에 바로 보고
                 if (SupabaseService.isGoogleLinked) {
                   SupabaseService.uploadLocalDataToCloud();
                 }
@@ -338,7 +325,7 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
           else _showResetDialog(context, '로그아웃', '정말 로그아웃 하시겠습니까?', () async { 
             await sBox.delete('last_synced_auth_id');
             await SupabaseService.signOut(); 
-            SupabaseService.isMigrationComplete = false; // 로그아웃 시 마이그레이션 상태 초기화
+            SupabaseService.isMigrationComplete = false;
             _calculateStats();
             _loadUserProfile(); 
           });
@@ -452,21 +439,6 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
             style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5B86E5), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
             child: const Text('변경하기'),
           ),
-        ],
-      ),
-    );
-  }
-
-  void _showSyncConflictDialog(BuildContext context, String serverSid) {
-    final bool isDarkMode = Theme.of(context).brightness == Brightness.dark;
-    showDialog(context: context, barrierDismissible: false, builder: (context) => AlertDialog(
-        backgroundColor: isDarkMode ? const Color(0xFF2D3436) : Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        title: const Text('기기 ID 충돌 감지', style: TextStyle(fontWeight: FontWeight.bold)),
-        content: const Text('이 계정으로 이미 다른 기기에서 학습한 기록이 있습니다.\n\n현재 기기의 데이터를 유지하시겠습니까, 아니면 클라우드 데이터를 불러오시겠습니까?'),
-        actions: [
-          TextButton(onPressed: () async { Navigator.pop(context); SupabaseService.isMigrationComplete = true; await SupabaseService.uploadLocalDataToCloud(clearFirst: true); _calculateStats(); _loadUserProfile(); }, child: const Text('현재 기기 데이터 유지')),
-          ElevatedButton(onPressed: () async { Navigator.pop(context); SupabaseService.isMigrationComplete = true; await SupabaseService.downloadProgressFromServer(); _calculateStats(); _loadUserProfile(); }, style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5B86E5), foregroundColor: Colors.white), child: const Text('클라우드 데이터 불러오기')),
         ],
       ),
     );
