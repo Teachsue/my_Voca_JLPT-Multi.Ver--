@@ -307,8 +307,32 @@ class SupabaseService {
 
   static Future<List<Word>> fetchAllWords() async {
     return await _safeRequest(() async {
-      final List<dynamic> response = await _client.from('words_master').select();
-      return response.map((json) => Word.fromJson(json)).toList();
+      List<dynamic> allData = [];
+      int from = 0;
+      const int step = 1000;
+      bool hasMore = true;
+
+      debugPrint("📡 서버 마스터 단어 데이터 전체 수신을 시작합니다...");
+
+      while (hasMore) {
+        final List<dynamic> response = await _client
+            .from('words_master')
+            .select()
+            .range(from, from + step - 1)
+            .order('id', ascending: true);
+        
+        allData.addAll(response);
+        debugPrint("📦 데이터 수신 중... (${allData.length}개 완료)");
+        
+        if (response.length < step) {
+          hasMore = false;
+        } else {
+          from += step;
+        }
+      }
+
+      debugPrint("✅ 총 ${allData.length}개의 마스터 단어 데이터를 수신했습니다.");
+      return allData.map((json) => Word.fromJson(json)).toList();
     }) ?? [];
   }
 
