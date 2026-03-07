@@ -37,8 +37,8 @@ class SupabaseService {
       await _client.auth.signInWithOAuth(
         OAuthProvider.google,
         redirectTo: kIsWeb ? null : redirectUrl,
-        // 안드로이드 시스템이 딥링크를 낚아채서 앱을 열고 창을 닫게 하려면 externalApplication이 가장 안정적입니다.
-        authScreenLaunchMode: LaunchMode.externalApplication,
+        // inAppBrowserView 모드는 로그인이 완료되면 자동으로 창을 닫고 앱으로 복귀하는 데 가장 효과적입니다.
+        authScreenLaunchMode: LaunchMode.inAppBrowserView,
       );
     } catch (e) {
       debugPrint("❌ 구글 로그인 에러 발생: $e");
