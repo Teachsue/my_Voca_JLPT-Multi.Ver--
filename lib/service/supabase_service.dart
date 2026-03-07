@@ -37,7 +37,6 @@ class SupabaseService {
       await _client.auth.signInWithOAuth(
         OAuthProvider.google,
         redirectTo: kIsWeb ? null : redirectUrl,
-        // [수정] externalApplication 대신 inAppBrowserView를 사용하여 로그인 후 창이 닫히도록 유도
         authScreenLaunchMode: LaunchMode.inAppBrowserView,
       );
     } catch (e) {
@@ -113,7 +112,6 @@ class SupabaseService {
       await box.put('user_nickname', '냥냥이${DateTime.now().millisecondsSinceEpoch % 1000}');
     }
 
-    // 1. [로그인 안 됨] 무조건 로컬 데이터 반환
     if (!isGoogleLinked || currentUser == null) {
       _isAdmin = false;
       return {
@@ -126,7 +124,6 @@ class SupabaseService {
       };
     }
 
-    // 2. [로그인 됨] 서버에서 프로필 정보만 '조회'합니다. (로컬 덮어쓰기 절대 금지)
     final existingProfile = await fetchRemoteProfile();
     if (existingProfile != null) {
       _isAdmin = existingProfile['is_admin'] == true || existingProfile['is_admin'] == 'true';
@@ -153,12 +150,9 @@ class SupabaseService {
       return existingProfile; 
     }
 
-    // 3. [신규 유저 가입 시] 구글 닉네임을 최우선으로 반영하도록 로직 변경
     final String gName = currentUser.userMetadata?['full_name'] ?? currentUser.userMetadata?['name'] ?? '구글 유저';
-    
-    // [수정] 로컬의 '냥냥이XXX' 대신 구글의 실제 성함을 최우선 사용
     final String initialNickname = gName; 
-    await box.put('user_nickname', initialNickname); // 로컬에도 갱신
+    await box.put('user_nickname', initialNickname); 
     
     final newProfile = {
       'id': stableId,
@@ -174,8 +168,6 @@ class SupabaseService {
     await _client.from('profiles').upsert(newProfile, onConflict: 'id');
     return newProfile;
   }
-
-  // --- 학습 진행 관리 ---
 
   static Future<void> updateLastStudyPath(String level, int dayIndex) async {
     final now = DateTime.now();
@@ -207,9 +199,13 @@ class SupabaseService {
     if (!isGoogleLinked) return;
     await _safeRequest(() async {
       final box = Hive.box(DatabaseService.sessionBoxName);
+      final wordBox = Hive.box<Word>(DatabaseService.boxName);
+      
+      // 1. 서버 프로필 가져오기
       final profile = await fetchRemoteProfile();
       if (profile == null) return;
 
+      // 2. 기기 ID 및 기본 설정 동기화
       final String remoteSid = profile['id'];
       await box.put('stable_user_id', remoteSid);
       await box.put('user_nickname', profile['nickname']);
@@ -217,27 +213,49 @@ class SupabaseService {
       await box.put('dark_mode', profile['is_dark_mode'] == true || profile['is_dark_mode']?.toString() == 'true');
       await box.put('app_theme', profile['app_theme'] ?? 'auto');
 
+      if (profile['last_study_level'] != null) {
+        await box.put('last_study_path', {
+          'level': profile['last_study_level'],
+          'day_index': profile['last_study_day'],
+          'updated_at': profile['last_study_at'],
+        });
+      }
+
+      // 3. [핵심] 현재 로컬의 모든 단어 학습 상태 초기화 (Clean Sync 준비)
+      debugPrint("🧹 로컬 학습 기록 초기화 중 (서버 데이터로 교체하기 위함)...");
+      for (var word in wordBox.values) {
+        if (word.is_bookmarked || word.is_wrong_note || word.status != 'unlearned') {
+          word.is_bookmarked = false;
+          word.is_wrong_note = false;
+          word.status = 'unlearned';
+          word.correct_count = 0;
+          word.incorrect_count = 0;
+          word.srs_stage = 0;
+          word.next_review_at = null;
+          await word.save();
+        }
+      }
+
+      // 4. 서버로부터 학습 데이터 수신
       final List<dynamic> response = await _client.from('user_progress').select().eq('user_id', remoteSid);
-      final wordBox = Hive.box<Word>(DatabaseService.boxName);
+      debugPrint("📥 서버에서 ${response.length}개의 최신 학습 기록 수신 완료.");
+
       for (var row in response) {
         final String hiveKey = '${row['level']}_${row['word_id']}';
         final word = wordBox.get(hiveKey);
         if (word != null) {
-          final int serverCorrect = int.tryParse(row['correct_count']?.toString() ?? '0') ?? 0;
-          word.is_bookmarked = word.is_bookmarked || (row['is_bookmarked'] == true);
-          word.is_wrong_note = word.is_wrong_note || (row['is_wrong_note'] == true);
-          if (serverCorrect > word.correct_count) {
-            word.correct_count = serverCorrect;
-            word.incorrect_count = int.tryParse(row['incorrect_count']?.toString() ?? '0') ?? 0;
-            word.srs_stage = int.tryParse(row['srs_stage']?.toString() ?? '0') ?? 0;
-            word.status = row['status']?.toString() ?? 'unlearned';
-            final String? rawDate = row['next_review_at']?.toString();
-            word.next_review_at = rawDate != null ? DateTime.tryParse(rawDate) : null;
-          }
+          word.is_bookmarked = (row['is_bookmarked'] == true || row['is_bookmarked']?.toString() == 'true');
+          word.is_wrong_note = (row['is_wrong_note'] == true || row['is_wrong_note']?.toString() == 'true');
+          word.correct_count = int.tryParse(row['correct_count']?.toString() ?? '0') ?? 0;
+          word.incorrect_count = int.tryParse(row['incorrect_count']?.toString() ?? '0') ?? 0;
+          word.srs_stage = int.tryParse(row['srs_stage']?.toString() ?? '0') ?? 0;
+          word.status = row['status']?.toString() ?? 'unlearned';
+          final String? rawDate = row['next_review_at']?.toString();
+          word.next_review_at = rawDate != null ? DateTime.tryParse(rawDate) : null;
           await word.save();
         }
       }
-      debugPrint("✅ 클라우드 데이터 병합 완료!");
+      debugPrint("✅ 클라우드 데이터 완벽 동기화(덮어쓰기) 완료!");
     });
   }
 

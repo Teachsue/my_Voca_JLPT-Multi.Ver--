@@ -36,7 +36,6 @@ class LevelTestViewModel extends ChangeNotifier {
     _totalCorrect = 0;
     _correctCountsPerLevel.updateAll((key, value) => 0);
 
-    // [버그 수정] 데이터가 비어있는 단어는 제외하고 유효한 단어만 추출
     _questions.addAll(_getRandomWords(1, 5));
     _questions.addAll(_getRandomWords(2, 5));
     _questions.addAll(_getRandomWords(3, 5));
@@ -46,25 +45,19 @@ class LevelTestViewModel extends ChangeNotifier {
     _questions.shuffle();
     _testTypes = List.generate(_questions.length, (_) => LevelTestType.values[Random().nextInt(LevelTestType.values.length)]);
     
-    // 새로 시작할 때는 기존 세션 삭제
     Hive.box(DatabaseService.sessionBoxName).delete('level_test_session');
-    
     _generateOptions();
     notifyListeners();
   }
 
   List<Word> _getRandomWords(int level, int count) {
     final allWords = DatabaseService.getWordsByLevel(level);
-    
-    // [핵심] 공백 데이터 필터링 로직 추가
     final validWords = allWords.where((w) => 
       w.meaning.trim().isNotEmpty && 
       w.kanji.trim().isNotEmpty && 
       w.kana.trim().isNotEmpty
     ).toList();
-
     if (validWords.isEmpty) return [];
-    
     validWords.shuffle();
     return validWords.take(count).toList();
   }
@@ -81,10 +74,7 @@ class LevelTestViewModel extends ChangeNotifier {
 
     final allWords = DatabaseService.getWordsByLevel(currentWord!.level);
     Set<String> distractors = {};
-    
-    // 선택지에서도 공백 단어 제외
-    var pool = allWords.where((w) => w.meaning.isNotEmpty && w.kanji.isNotEmpty).toList();
-    pool.shuffle();
+    var pool = allWords.where((w) => w.meaning.isNotEmpty && w.kanji.isNotEmpty).toList()..shuffle();
 
     for (var w in pool) {
       if (distractors.length >= 3) break;
@@ -117,8 +107,6 @@ class LevelTestViewModel extends ChangeNotifier {
       _totalCorrect++;
       _correctCountsPerLevel[currentWord!.level] = (_correctCountsPerLevel[currentWord!.level] ?? 0) + 1;
     }
-    
-    // 정답을 눌렀을 때만 세션 저장 (이래야 '한 문제라도 풀었을 때' 기준이 성립)
     _saveSession();
     notifyListeners();
   }
@@ -129,7 +117,6 @@ class LevelTestViewModel extends ChangeNotifier {
       _isAnswered = false;
       _selectedAnswer = null;
       _generateOptions();
-      // 다음 문제로 넘어가기 전 상태도 저장
       _saveSession();
     } else {
       _isFinished = true;
@@ -148,7 +135,16 @@ class LevelTestViewModel extends ChangeNotifier {
       'currentIndex': _currentIndex,
       'totalCorrect': _totalCorrect,
       'correctCountsPerLevel': _correctCountsPerLevel,
-      'questions': _questions.map((w) => w.toJson()).toList(),
+      // [수정] Word 객체의 원본 데이터를 모두 보존하도록 toJson 활용
+      'questions': _questions.map((w) => {
+        'id': w.id,
+        'kanji': w.kanji,
+        'kana': w.kana,
+        'meaning': w.meaning,
+        'level': w.level,
+        'pronunciation': w.koreanPronunciation,
+        'example_sentence': w.example_sentence,
+      }).toList(),
       'testTypes': _testTypes.map((t) => t.index).toList(),
       'updatedAt': DateTime.now().toIso8601String(),
     };
@@ -158,12 +154,15 @@ class LevelTestViewModel extends ChangeNotifier {
   void resumeTest() {
     final box = Hive.box(DatabaseService.sessionBoxName);
     final dynamic sessionRaw = box.get('level_test_session');
-    if (sessionRaw == null) return;
+    if (sessionRaw == null) {
+      initTest();
+      return;
+    }
 
     final Map<String, dynamic> session = Map<String, dynamic>.from(sessionRaw);
 
-    _currentIndex = session['currentIndex'];
-    _totalCorrect = session['totalCorrect'];
+    _currentIndex = session['currentIndex'] ?? 0;
+    _totalCorrect = session['totalCorrect'] ?? 0;
     
     final dynamic rawLevelCounts = session['correctCountsPerLevel'];
     _correctCountsPerLevel.clear();
@@ -173,8 +172,20 @@ class LevelTestViewModel extends ChangeNotifier {
       });
     }
 
+    // [핵심 수정] 단어 데이터 복구 시 필드 매핑 강화
     final List<dynamic> rawQuestions = session['questions'];
-    _questions = rawQuestions.map((j) => Word.fromJson(Map<String, dynamic>.from(j))).toList();
+    _questions = rawQuestions.map((j) {
+      final q = Map<String, dynamic>.from(j);
+      return Word(
+        id: q['id'] ?? 0,
+        kanji: q['kanji'] ?? '',
+        kana: q['kana'] ?? '',
+        meaning: q['meaning'] ?? '',
+        level: q['level'] ?? 5,
+        koreanPronunciation: q['pronunciation'] ?? '',
+        example_sentence: q['example_sentence'] ?? '',
+      );
+    }).toList();
     
     final List<dynamic> rawTypes = session['testTypes'];
     _testTypes = rawTypes.map((i) => LevelTestType.values[i as int]).toList();
@@ -182,8 +193,13 @@ class LevelTestViewModel extends ChangeNotifier {
     _isFinished = false;
     _isAnswered = false;
     _selectedAnswer = null;
-    _generateOptions();
-    notifyListeners();
+    
+    if (_questions.isEmpty) {
+      initTest();
+    } else {
+      _generateOptions();
+      notifyListeners();
+    }
   }
 
   String _calculateResult() {

@@ -61,7 +61,7 @@ class _HomePageState extends State<HomePage> {
       await SupabaseService.bulkUpsertWords(allWords);
       if (mounted) {
         Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('✨ ${allWords.length}개 단어 마이그레이션 성공!')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('✨ 마이그레이션 성공!')));
       }
     } catch (e) {
       if (mounted) Navigator.pop(context);
@@ -160,11 +160,10 @@ class _HomePageState extends State<HomePage> {
                           ListTile(
                             leading: const Icon(Icons.restart_alt_rounded, color: Colors.red),
                             title: const Text('로컬 버전 초기화'),
-                            subtitle: const Text('내 폰의 버전을 0.0으로 리셋합니다.'),
+                            subtitle: const Text('버전을 0.0으로 리셋합니다.'),
                             onTap: () async {
                               Navigator.pop(context);
-                              final sessionBox = Hive.box(DatabaseService.sessionBoxName);
-                              await sessionBox.put('master_data_version', 0.0);
+                              await Hive.box(DatabaseService.sessionBoxName).put('master_data_version', 0.0);
                               if (mounted) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('🧹 초기화 완료'))); }
                             },
                           ),
@@ -186,28 +185,18 @@ class _HomePageState extends State<HomePage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // [1] Header (Fixed Overflow & Hidden Admin Access)
+                        // [1] Header
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             Expanded(
                               child: GestureDetector(
-                                onDoubleTap: () {
-                                  if (SupabaseService.isAdmin) {
-                                    _scaffoldKey.currentState?.openDrawer();
-                                  }
-                                },
+                                onDoubleTap: () { if (SupabaseService.isAdmin) _scaffoldKey.currentState?.openDrawer(); },
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Text('반가워요, $_nickname님! 👋', 
-                                      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    Text('오늘도 즐겁게 일본어 공부해요🐾', 
-                                      style: TextStyle(fontSize: 13, color: subTextColor, fontWeight: FontWeight.w500),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
+                                    Text('반가워요, $_nickname님! 👋', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis),
+                                    Text('오늘도 즐겁게 일본어 공부해요🐾', style: TextStyle(fontSize: 13, color: subTextColor, fontWeight: FontWeight.w500), overflow: TextOverflow.ellipsis),
                                   ],
                                 ),
                               ),
@@ -267,28 +256,31 @@ class _HomePageState extends State<HomePage> {
                         ),
                         const SizedBox(height: 16),
 
-                        // [3] Dashboard Row
-                        if (lastPath != null || recommendedLevel == null)
-                          Row(
-                            children: [
-                              if (lastPath != null)
-                                Expanded(child: _buildDashCard(context, "이어하기", "${lastPath['level']} D-${lastPath['day_index'] + 1}", Icons.history_rounded, pointColor, isDarkMode, () async {
-                                  final viewModel = StudyViewModel();
-                                  final allChunks = await viewModel.loadLevelWords(lastPath['level']);
-                                  if (context.mounted) Navigator.push(context, MaterialPageRoute(builder: (context) => WordListPage(level: lastPath['level'], initialDayIndex: lastPath['day_index'], allDayChunks: allChunks)));
-                                })),
-                              if (lastPath != null && recommendedLevel == null) const SizedBox(width: 12),
-                              if (recommendedLevel == null)
-                                Expanded(child: _buildDashCard(context, "진단 테스트", testSession != null ? "문제 이어풀기" : "내 실력 진단", Icons.assignment_turned_in_rounded, Colors.teal, isDarkMode, () {
-                                  if (testSession != null) _showResumeTestDialog(context, pointColor, isDarkMode, testSession);
-                                  else _showLevelTestGuide(context, pointColor, isDarkMode);
-                                })),
-                            ],
-                          ),
-                        
-                        if (recommendedLevel != null)
-                          _buildDashCard(context, "나의 추천 레벨", "$recommendedLevel 과정 추천 🏆", Icons.workspace_premium_rounded, pointColor, isDarkMode, () => Navigator.push(context, MaterialPageRoute(builder: (context) => LevelSummaryPage(level: recommendedLevel)))),
-
+                        // [3] Dashboard Row (Unified Style)
+                        Row(
+                          children: [
+                            // Left Card: Resume Study (If exists) or Bookmark/Wrong Note (Fallback)
+                            Expanded(
+                              child: lastPath != null
+                                  ? _buildDashCard(context, "이어하기", "${lastPath['level']} D-${lastPath['day_index'] + 1}", Icons.history_rounded, pointColor, isDarkMode, () async {
+                                      final viewModel = StudyViewModel();
+                                      final allChunks = await viewModel.loadLevelWords(lastPath['level']);
+                                      if (context.mounted) Navigator.push(context, MaterialPageRoute(builder: (context) => WordListPage(level: lastPath['level'], initialDayIndex: lastPath['day_index'], allDayChunks: allChunks)));
+                                    })
+                                  : _buildDashCard(context, "북마크", "중요 단어 보기", Icons.star_rounded, Colors.amber, isDarkMode, () => Navigator.push(context, MaterialPageRoute(builder: (context) => const BookmarkPage()))),
+                            ),
+                            const SizedBox(width: 12),
+                            // Right Card: Diagnostic Test (Resuming or New) OR Recommended Result
+                            Expanded(
+                              child: recommendedLevel != null
+                                  ? _buildDashCard(context, "추천 레벨", "$recommendedLevel 과정", Icons.workspace_premium_rounded, pointColor, isDarkMode, () => Navigator.push(context, MaterialPageRoute(builder: (context) => LevelSummaryPage(level: recommendedLevel))))
+                                  : _buildDashCard(context, "진단 테스트", testSession != null ? "문제 이어풀기" : "진단 테스트 풀기", Icons.assignment_turned_in_rounded, Colors.teal, isDarkMode, () {
+                                      if (testSession != null) _showResumeTestDialog(context, pointColor, isDarkMode, testSession);
+                                      else _showLevelTestGuide(context, pointColor, isDarkMode);
+                                    }),
+                            ),
+                          ],
+                        ),
                         const SizedBox(height: 20),
 
                         // [4] Basic Training
