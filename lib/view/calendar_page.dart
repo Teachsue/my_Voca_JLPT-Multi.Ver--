@@ -44,13 +44,16 @@ class _CalendarPageState extends State<CalendarPage> {
   @override
   Widget build(BuildContext context) {
     final int currentStreak = _calculateStreak();
+    final bool isDarkMode = Theme.of(context).brightness == Brightness.dark;
+    final Color cardColor = isDarkMode ? Colors.white.withOpacity(0.1) : Colors.white;
+    final Color textColor = isDarkMode ? Colors.white : Colors.black87;
+    final Color subTextColor = isDarkMode ? Colors.white70 : Colors.black54;
     
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: AppBar(
         title: const Text('학습 캘린더', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
         backgroundColor: Colors.transparent,
-        foregroundColor: Colors.black,
         elevation: 0,
         centerTitle: true,
       ),
@@ -63,9 +66,9 @@ class _CalendarPageState extends State<CalendarPage> {
               child: Container(
                 padding: const EdgeInsets.only(bottom: 16),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: cardColor,
                   borderRadius: BorderRadius.circular(24),
-                  boxShadow: [
+                  boxShadow: isDarkMode ? [] : [
                     BoxShadow(color: Colors.grey.withOpacity(0.05), blurRadius: 15, offset: const Offset(0, 8)),
                   ],
                 ),
@@ -97,14 +100,15 @@ class _CalendarPageState extends State<CalendarPage> {
                       color: Color(0xFF5B86E5),
                       shape: BoxShape.circle,
                     ),
-                    defaultTextStyle: const TextStyle(color: Colors.black87),
+                    defaultTextStyle: TextStyle(color: textColor),
+                    outsideTextStyle: TextStyle(color: subTextColor.withOpacity(0.5)),
                   ),
-                  headerStyle: const HeaderStyle(
+                  headerStyle: HeaderStyle(
                     formatButtonVisible: false,
                     titleCentered: true,
-                    titleTextStyle: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                    leftChevronIcon: Icon(Icons.chevron_left_rounded, color: Colors.black54),
-                    rightChevronIcon: Icon(Icons.chevron_right_rounded, color: Colors.black54),
+                    titleTextStyle: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: textColor),
+                    leftChevronIcon: Icon(Icons.chevron_left_rounded, color: subTextColor),
+                    rightChevronIcon: Icon(Icons.chevron_right_rounded, color: subTextColor),
                   ),
                   calendarBuilders: CalendarBuilders(
                     // 토요일 색상 처리를 위한 빌더
@@ -115,7 +119,11 @@ class _CalendarPageState extends State<CalendarPage> {
                       if (day.weekday == DateTime.sunday) {
                         return const Center(child: Text('일', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)));
                       }
-                      return null;
+                      // 일반 요일 텍스트 색상
+                      return Center(child: Text(
+                        ['월', '화', '수', '목', '금'][day.weekday - 1],
+                        style: TextStyle(color: subTextColor, fontWeight: FontWeight.bold),
+                      ));
                     },
                     // 토요일 숫자 색상
                     defaultBuilder: (context, day, focusedDay) {
@@ -148,9 +156,9 @@ class _CalendarPageState extends State<CalendarPage> {
               _buildStreakCard(currentStreak),
               const SizedBox(height: 24),
             ],
-            _buildStatusHeader(),
+            _buildStatusHeader(textColor),
             const SizedBox(height: 12),
-            _buildCompletionStatus(),
+            _buildCompletionStatus(cardColor, textColor, subTextColor, isDarkMode),
             const SizedBox(height: 40),
           ],
         ),
@@ -158,12 +166,12 @@ class _CalendarPageState extends State<CalendarPage> {
     );
   }
 
-  Widget _buildStatusHeader() {
-    return const Padding(
-      padding: EdgeInsets.symmetric(horizontal: 24),
+  Widget _buildStatusHeader(Color textColor) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Row(
         children: [
-          Text('학습 상세 정보', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Colors.black87)),
+          Text('학습 상세 정보', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: textColor)),
         ],
       ),
     );
@@ -200,7 +208,7 @@ class _CalendarPageState extends State<CalendarPage> {
     );
   }
 
-  Widget _buildCompletionStatus() {
+  Widget _buildCompletionStatus(Color cardColor, Color textColor, Color subTextColor, bool isDarkMode) {
     bool isCompleted = _isDayCompleted(_selectedDay ?? _focusedDay);
     final dateStr = DateFormat('yyyy년 M월 d일').format(_selectedDay ?? _focusedDay);
 
@@ -209,9 +217,9 @@ class _CalendarPageState extends State<CalendarPage> {
       child: Container(
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: cardColor,
           borderRadius: BorderRadius.circular(20),
-          boxShadow: [
+          boxShadow: isDarkMode ? [] : [
             BoxShadow(color: Colors.grey.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4)),
           ],
         ),
@@ -226,7 +234,7 @@ class _CalendarPageState extends State<CalendarPage> {
               ),
               child: Icon(
                 isCompleted ? Icons.workspace_premium_rounded : Icons.calendar_today_rounded,
-                color: isCompleted ? Colors.orange : Colors.grey,
+                color: isCompleted ? Colors.orange : (isDarkMode ? Colors.white38 : Colors.grey),
                 size: 32,
               ),
             ),
@@ -235,7 +243,7 @@ class _CalendarPageState extends State<CalendarPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(dateStr, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  Text(dateStr, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: textColor)),
                   const SizedBox(height: 4),
                   Row(
                     children: [
@@ -243,7 +251,7 @@ class _CalendarPageState extends State<CalendarPage> {
                         isCompleted ? '오늘의 단어 학습 완료' : '학습 기록이 없습니다',
                         style: TextStyle(
                           fontSize: 14,
-                          color: isCompleted ? Colors.orange.shade800 : Colors.grey,
+                          color: isCompleted ? (isDarkMode ? Colors.orangeAccent : Colors.orange.shade800) : subTextColor,
                           fontWeight: isCompleted ? FontWeight.w600 : FontWeight.normal,
                         ),
                       ),
