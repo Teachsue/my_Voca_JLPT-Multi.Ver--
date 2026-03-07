@@ -171,4 +171,27 @@ class StudyViewModel extends ChangeNotifier {
     _prepareQuestion();
     notifyListeners();
   }
+
+  /// [신규] 특정 레벨의 모든 단어를 가져와서 10개씩 묶어 반환합니다. (이어서 학습하기 기능용)
+  Future<List<List<Word>>> loadLevelWords(String level) async {
+    int levelInt = 5;
+    if (level == 'N5') levelInt = 5;
+    else if (level == 'N4') levelInt = 4;
+    else if (level == 'N3') levelInt = 3;
+    else if (level == 'N2') levelInt = 2;
+    else if (level == 'N1') levelInt = 1;
+    else if (level == '히라가나') levelInt = 11;
+    else if (level == '가타카나') levelInt = 12;
+
+    final List<Word> words = _wordBox.values
+        .where((w) => w.level == levelInt)
+        .toList();
+
+    // 10개씩 묶기
+    List<List<Word>> chunks = [];
+    for (var i = 0; i < words.length; i += 10) {
+      chunks.add(words.sublist(i, i + 10 > words.length ? words.length : i + 10));
+    }
+    return chunks;
+  }
 }

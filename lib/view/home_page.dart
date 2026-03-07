@@ -172,9 +172,12 @@ class _HomePageState extends State<HomePage> {
       child: ValueListenableBuilder<Box>(
         valueListenable: Hive.box(
           DatabaseService.sessionBoxName,
-        ).listenable(keys: ['app_theme', 'master_data_version']),
+        ).listenable(keys: ['app_theme', 'master_data_version', 'last_study_path', 'level_test_session']),
         builder: (context, box, _) {
           final String appTheme = box.get('app_theme', defaultValue: 'auto');
+          final Map<String, dynamic>? lastPath = box.get('last_study_path') != null 
+              ? Map<String, dynamic>.from(box.get('last_study_path')) 
+              : null;
           final List<Color> bannerColors = _getBannerColors(
             isDarkMode,
             appTheme,
@@ -445,18 +448,28 @@ class _HomePageState extends State<HomePage> {
                           },
                         ),
                         const SizedBox(height: 12),
+                        // --- 이어서 학습하기 카드 추가 ---
+                        if (lastPath != null) ...[
+                          _buildResumeCard(context, lastPath, isDarkMode, pointColor),
+                          const SizedBox(height: 12),
+                        ],
                         ValueListenableBuilder(
                           valueListenable: Hive.box(
                             DatabaseService.sessionBoxName,
-                          ).listenable(keys: ['recommended_level']),
+                          ).listenable(keys: ['recommended_level', 'level_test_session']),
                           builder: (context, box, child) {
                             final String? recommendedLevel = box.get(
                               'recommended_level',
                             );
+                            final Map<String, dynamic>? session = box.get('level_test_session') != null 
+                                ? Map<String, dynamic>.from(box.get('level_test_session')) 
+                                : null;
                             final bool hasResult = recommendedLevel != null;
+                            final bool hasActiveSession = session != null;
+                            
                             return GestureDetector(
                               onTap: () async {
-                                if (hasResult)
+                                if (hasResult) {
                                   await Navigator.push(
                                     context,
                                     MaterialPageRoute(
@@ -465,12 +478,14 @@ class _HomePageState extends State<HomePage> {
                                       ),
                                     ),
                                   );
-                                else
-                                  _showLevelTestGuide(
-                                    context,
-                                    pointColor,
-                                    isDarkMode,
-                                  );
+                                } else {
+                                  // 진행 중인 세션이 있다면 '이어하기' 팝업, 없다면 '가이드' 팝업
+                                  if (hasActiveSession) {
+                                    _showResumeTestDialog(context, pointColor, isDarkMode, session);
+                                  } else {
+                                    _showLevelTestGuide(context, pointColor, isDarkMode);
+                                  }
+                                }
                                 _refresh();
                               },
                               child: Container(
@@ -510,14 +525,24 @@ class _HomePageState extends State<HomePage> {
                                     ),
                                     const SizedBox(width: 12),
                                     Expanded(
-                                      child: Text(
-                                        hasResult
-                                            ? "추천 레벨: $recommendedLevel"
-                                            : "내 실력 진단 테스트",
-                                        style: const TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.bold,
-                                        ),
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            hasResult
+                                                ? "추천 레벨: $recommendedLevel"
+                                                : "진단 테스트 풀기",
+                                            style: const TextStyle(
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                          if (!hasResult && hasActiveSession)
+                                            Text(
+                                              "풀다 만 문제가 있어요! 🐾",
+                                              style: TextStyle(fontSize: 12, color: pointColor.withOpacity(0.8), fontWeight: FontWeight.w600),
+                                            ),
+                                        ],
                                       ),
                                     ),
                                     const Icon(
@@ -696,6 +721,72 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Widget _buildResumeCard(BuildContext context, Map<String, dynamic> lastPath, bool isDarkMode, Color pointColor) {
+    final String level = lastPath['level'] ?? '';
+    final int dayIndex = lastPath['day_index'] ?? 0;
+    
+    return GestureDetector(
+      onTap: () async {
+        final viewModel = StudyViewModel();
+        final allChunks = await viewModel.loadLevelWords(level);
+        if (context.mounted) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => WordListPage(
+                level: level,
+                initialDayIndex: dayIndex,
+                allDayChunks: allChunks,
+              ),
+            ),
+          );
+          _refresh();
+        }
+      },
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+        decoration: BoxDecoration(
+          color: isDarkMode ? Colors.white.withOpacity(0.1) : const Color(0xFFFFF9F0),
+          borderRadius: BorderRadius.circular(14),
+          border: isDarkMode ? null : Border.all(color: Colors.orange.withOpacity(0.2)),
+          boxShadow: isDarkMode ? [] : [
+            BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 6),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.history_rounded, color: Colors.orange, size: 20),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    "이어서 학습하기",
+                    style: TextStyle(fontSize: 12, color: Colors.orange, fontWeight: FontWeight.bold),
+                  ),
+                  Text(
+                    "$level - DAY ${dayIndex + 1}",
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.play_arrow_rounded, color: Colors.orange, size: 24),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildHeaderIcon(IconData icon, VoidCallback onTap, bool isDarkMode) {
     return Container(
       width: 40,
@@ -812,6 +903,8 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  // --- 진단 테스트 관련 팝업 ---
+
   void _showLevelTestGuide(
     BuildContext context,
     Color themeColor,
@@ -819,114 +912,136 @@ class _HomePageState extends State<HomePage> {
   ) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: isDarkMode ? const Color(0xFF2D3436) : Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-        contentPadding: const EdgeInsets.fromLTRB(24, 24, 24, 12),
-        title: Column(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: themeColor.withOpacity(0.1),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                Icons.auto_awesome_rounded,
-                color: themeColor,
-                size: 40,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              "정밀 실력 진단",
-              style: TextStyle(
-                fontWeight: FontWeight.w900,
-                fontSize: 22,
-                color: isDarkMode ? Colors.white : Colors.black87,
-              ),
-            ),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              "JLPT N1~N5 전 범위를 분석하여\n가장 효율적인 학습 레벨을 추천해 드립니다.",
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 14,
-                color: isDarkMode ? Colors.white70 : Colors.blueGrey,
-                height: 1.5,
-              ),
-            ),
-            const SizedBox(height: 20),
-            _buildGuideItem(
-              Icons.playlist_add_check_rounded,
-              "총 30개 문항 (레벨별 핵심 단어)",
-              isDarkMode,
-              themeColor,
-            ),
-            _buildGuideItem(
-              Icons.timer_outlined,
-              "예상 소요 시간: 약 10분",
-              isDarkMode,
-              themeColor,
-            ),
-            _buildGuideItem(
-              Icons.analytics_outlined,
-              "취약 구간 분석 및 맞춤형 로드맵 제공",
-              isDarkMode,
-              themeColor,
-            ),
-          ],
-        ),
-        actions: [
-          Row(
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
+          decoration: BoxDecoration(
+            color: isDarkMode ? const Color(0xFF2D3436) : Colors.white,
+            borderRadius: BorderRadius.circular(32),
+            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.15), blurRadius: 20, offset: const Offset(0, 10))],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Expanded(
-                child: TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: Text(
-                    "나중에",
-                    style: TextStyle(
-                      color: isDarkMode ? Colors.white24 : Colors.grey,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(color: themeColor.withOpacity(0.12), shape: BoxShape.circle),
+                child: Icon(Icons.auto_awesome_rounded, color: themeColor, size: 40),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const LevelTestPage(),
-                      ),
-                    );
-                    _refresh();
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: themeColor,
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
+              const SizedBox(height: 24),
+              Text("정밀 실력 진단", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 24, color: isDarkMode ? Colors.white : Colors.black87)),
+              const SizedBox(height: 12),
+              Text(
+                "JLPT N1~N5 전 범위를 분석하여\n가장 효율적인 학습 레벨을 추천해 드립니다.",
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 14, color: isDarkMode ? Colors.white70 : Colors.blueGrey, height: 1.6),
+              ),
+              const SizedBox(height: 24),
+              _buildGuideItem(Icons.playlist_add_check_rounded, "총 30개 문항 (레벨별 핵심 단어)", isDarkMode, themeColor),
+              _buildGuideItem(Icons.timer_outlined, "예상 소요 시간: 약 10분", isDarkMode, themeColor),
+              _buildGuideItem(Icons.analytics_outlined, "취약 구간 분석 및 맞춤형 로드맵", isDarkMode, themeColor),
+              const SizedBox(height: 32),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
+                      child: Text("나중에", style: TextStyle(color: isDarkMode ? Colors.white24 : Colors.grey, fontWeight: FontWeight.bold)),
                     ),
                   ),
-                  child: const Text(
-                    "테스트 시작",
-                    style: TextStyle(fontWeight: FontWeight.bold),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        Navigator.push(context, MaterialPageRoute(builder: (context) => const LevelTestPage(shouldResume: false)));
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: themeColor,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                      child: const Text("테스트 시작", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                    ),
                   ),
-                ),
+                ],
               ),
             ],
           ),
-        ],
+        ),
+      ),
+    );
+  }
+
+  void _showResumeTestDialog(BuildContext context, Color themeColor, bool isDarkMode, Map<String, dynamic> session) {
+    final int currentNum = (session['currentIndex'] ?? 0) + 1;
+
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
+          decoration: BoxDecoration(
+            color: isDarkMode ? const Color(0xFF2D3436) : Colors.white,
+            borderRadius: BorderRadius.circular(32),
+            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.15), blurRadius: 20, offset: const Offset(0, 10))],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(color: themeColor.withOpacity(0.12), shape: BoxShape.circle),
+                child: Icon(Icons.pending_actions_rounded, color: themeColor, size: 40),
+              ),
+              const SizedBox(height: 24),
+              Text("테스트 이어하기", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 24, color: isDarkMode ? Colors.white : Colors.black87)),
+              const SizedBox(height: 12),
+              Text(
+                "이전에 $currentNum번 문제까지 풀었습니다.\n기록을 이어서 진행하시겠습니까?",
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 15, color: isDarkMode ? Colors.white70 : Colors.blueGrey, height: 1.6),
+              ),
+              const SizedBox(height: 32),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextButton(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        Navigator.push(context, MaterialPageRoute(builder: (context) => const LevelTestPage(shouldResume: false)));
+                      },
+                      style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
+                      child: Text("새로 시작", style: TextStyle(color: isDarkMode ? Colors.white24 : Colors.grey, fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        Navigator.push(context, MaterialPageRoute(builder: (context) => const LevelTestPage(shouldResume: true)));
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: themeColor,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                      child: const Text("이어서 풀기", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -938,17 +1053,22 @@ class _HomePageState extends State<HomePage> {
     Color themeColor,
   ) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
         children: [
-          Icon(icon, size: 18, color: themeColor.withOpacity(0.6)),
-          const SizedBox(width: 10),
+          Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(color: themeColor.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
+            child: Icon(icon, size: 18, color: themeColor),
+          ),
+          const SizedBox(width: 12),
           Expanded(
             child: Text(
               text,
               style: TextStyle(
-                fontSize: 13,
-                color: isDarkMode ? Colors.white60 : Colors.black54,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: isDarkMode ? Colors.white60 : Colors.black87,
               ),
             ),
           ),

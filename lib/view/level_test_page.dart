@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import '../service/database_service.dart';
 import '../view_model/level_test_view_model.dart';
 
 class LevelTestPage extends StatelessWidget {
-  const LevelTestPage({super.key});
+  final bool shouldResume;
+  
+  const LevelTestPage({super.key, this.shouldResume = false});
 
   @override
   Widget build(BuildContext context) {
@@ -11,7 +15,15 @@ class LevelTestPage extends StatelessWidget {
     final Color textColor = isDarkMode ? Colors.white : Colors.black87;
 
     return ChangeNotifierProvider(
-      create: (context) => LevelTestViewModel()..initTest(),
+      create: (context) {
+        final vm = LevelTestViewModel();
+        if (shouldResume) {
+          vm.resumeTest();
+        } else {
+          vm.initTest();
+        }
+        return vm;
+      },
       child: Scaffold(
         backgroundColor: Colors.transparent, // 배경 테마 투과
         appBar: AppBar(
@@ -145,24 +157,23 @@ class LevelTestPage extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const SizedBox(height: 10),
-                // 고정된 높이의 문제 카드 (위치 흔들림 방지 및 오버플로우 해결)
+                // 고정된 높이의 문제 카드
                 Container(
-                  height: 260, // 높이를 220에서 260으로 상향하여 공간 확보
-                  padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 20), // 상하 패딩 최적화
+                  height: 260,
+                  padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 20),
                   decoration: BoxDecoration(
                     color: isDarkMode ? Colors.white.withOpacity(0.1) : Colors.white,
                     borderRadius: BorderRadius.circular(24),
                     boxShadow: isDarkMode ? [] : [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 15, offset: const Offset(0, 8))],
                   ),
                   child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center, // 중앙 정렬로 일관된 위치 유지
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Text(
                         type == LevelTestType.kanjiToMeaning ? '단어의 뜻을 고르세요' : '단어에 맞는 표현을 고르세요',
                         style: TextStyle(fontSize: 13, color: Colors.blueGrey.withOpacity(0.6), fontWeight: FontWeight.w500),
                       ),
                       const SizedBox(height: 15),
-                      // 발음 정보를 항상 상단에 표시 (모든 문제 유형 공통)
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                         decoration: BoxDecoration(color: const Color(0xFF5B86E5).withOpacity(0.1), borderRadius: BorderRadius.circular(10)),
@@ -192,7 +203,6 @@ class LevelTestPage extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 24),
-                // 선택지 버튼들 (항상 같은 위치에서 시작)
                 ...viewModel.currentOptions.map((option) => _buildOptionButton(viewModel, option, isDarkMode)),
                 const SizedBox(height: 40),
               ],

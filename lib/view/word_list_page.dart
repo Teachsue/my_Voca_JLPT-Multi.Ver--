@@ -37,6 +37,8 @@ class _WordListPageState extends State<WordListPage> {
     if (!_isTodaysWords) {
       final sessionBox = Hive.box(DatabaseService.sessionBoxName);
       sessionBox.put('last_day_${widget.level}', _currentDayIndex + 1);
+      // 마지막 학습 경로 저장
+      SupabaseService.updateLastStudyPath(widget.level, _currentDayIndex);
     }
   }
 
@@ -103,6 +105,8 @@ class _WordListPageState extends State<WordListPage> {
           setState(() { _currentDayIndex = index; });
           if (!_isTodaysWords) {
             Hive.box(DatabaseService.sessionBoxName).put('last_day_${widget.level}', index + 1);
+            // 페이지를 넘길 때마다 마지막 학습 경로 업데이트
+            SupabaseService.updateLastStudyPath(widget.level, index);
           }
         },
         itemCount: widget.allDayChunks.length,

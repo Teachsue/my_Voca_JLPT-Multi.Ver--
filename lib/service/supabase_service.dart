@@ -121,6 +121,7 @@ class SupabaseService {
         'recommended_level': box.get('recommended_level'),
         'is_dark_mode': box.get('dark_mode') == true || box.get('dark_mode').toString() == 'true',
         'app_theme': box.get('app_theme', defaultValue: 'auto'),
+        'last_study_path': box.get('last_study_path'),
       };
     }
 
@@ -139,10 +140,19 @@ class SupabaseService {
           'recommended_level': box.get('recommended_level'),
           'is_dark_mode': box.get('dark_mode') == true || box.get('dark_mode').toString() == 'true',
           'app_theme': box.get('app_theme', defaultValue: 'auto'),
+          'last_study_path': box.get('last_study_path'),
         };
       }
 
-      // 이미 동기화가 끝난 계정이라면 서버 데이터를 반환 (이미 동기화 버튼에서 로컬에 썼을 것임)
+      // 이미 동기화가 끝난 계정이라면 서버 데이터를 로컬에 동기화 후 반환
+      // [개별 컬럼 방식] 서버의 개별 컬럼들을 로컬의 last_study_path Map으로 통합하여 저장
+      if (existingProfile['last_study_level'] != null) {
+        await box.put('last_study_path', {
+          'level': existingProfile['last_study_level'],
+          'day_index': existingProfile['last_study_day'],
+          'updated_at': existingProfile['last_study_at'],
+        });
+      }
       return existingProfile; 
     }
 
@@ -157,12 +167,45 @@ class SupabaseService {
       'recommended_level': box.get('recommended_level'),
       'is_dark_mode': box.get('dark_mode') == true || box.get('dark_mode').toString() == 'true',
       'app_theme': box.get('app_theme', defaultValue: 'auto'),
+      'last_study_level': null,
+      'last_study_day': null,
+      'last_study_at': null,
     };
     await _client.from('profiles').upsert(newProfile, onConflict: 'id');
     return newProfile;
   }
 
   // --- 학습 진행 관리 ---
+
+  static Future<void> updateLastStudyPath(String level, int dayIndex) async {
+    final now = DateTime.now();
+    final box = Hive.box(DatabaseService.sessionBoxName);
+    final path = {
+      'level': level,
+      'day_index': dayIndex,
+      'updated_at': now.toIso8601String(),
+    };
+    
+    // 로컬 저장 (편의상 Map 형태 유지)
+    await box.put('last_study_path', path);
+    
+    // 서버 저장 (로그인 시 개별 컬럼으로 쪼개서 저장)
+    if (isGoogleLinked) {
+      final currentUser = _client.auth.currentUser;
+      if (currentUser != null) {
+        // [최적화] await 없이 백그라운드에서 조용히 전송 (Fire & Forget)
+        _client.from('profiles').update({
+          'last_study_level': level,
+          'last_study_day': dayIndex,
+          'last_study_at': now.toIso8601String(),
+        }).eq('auth_id', currentUser.id).then((_) {
+          debugPrint("🚀 마지막 학습 경로 서버 저장 완료 (개별 컬럼): $level Day ${dayIndex + 1}");
+        }).catchError((e) {
+          debugPrint("❌ 마지막 학습 경로 서버 저장 실패: $e");
+        });
+      }
+    }
+  }
 
   static Future<void> downloadProgressFromServer() async {
     if (!isGoogleLinked) return;
