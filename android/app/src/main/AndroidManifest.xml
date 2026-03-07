@@ -27,12 +27,12 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
 
-            <!-- Supabase 로그인 콜백 설정 -->
-            <intent-filter android:label="supabase_callback">
+            <!-- Supabase 로그인 콜백 설정 (보강) -->
+            <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="io.supabase.flutter" android:host="login-callback" />
+                <data android:scheme="io.supabase.flutter" android:host="callback" />
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.

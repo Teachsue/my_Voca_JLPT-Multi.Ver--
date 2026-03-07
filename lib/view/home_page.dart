@@ -223,7 +223,12 @@ class _HomePageState extends State<HomePage> {
                                 final viewModel = StudyViewModel();
                                 final List<Word> todaysWords = await viewModel.loadTodaysWords();
                                 if (context.mounted) {
-                                  await Navigator.push(context, MaterialPageRoute(builder: (context) => WordListPage(level: isCompleted ? '오늘의 단어 복습' : '오늘의 단어', initialDayIndex: 0, allDayChunks: [todaysWords])));
+                                  await Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => WordListPage(level: isCompleted ? '오늘의 단어 복습' : '오늘의 단어', initialDayIndex: 0, allDayChunks: [todaysWords]),
+                                    ),
+                                  );
                                   _refresh();
                                 }
                               },
@@ -256,10 +261,10 @@ class _HomePageState extends State<HomePage> {
                         ),
                         const SizedBox(height: 16),
 
-                        // [3] Dashboard Row (Unified Style)
+                        // [3] Dashboard Row
                         Row(
                           children: [
-                            // Left Card: Resume Study (If exists) or Bookmark/Wrong Note (Fallback)
+                            // Left Card: Resume Study or Empty State (No more fallback to Bookmark)
                             Expanded(
                               child: lastPath != null
                                   ? _buildDashCard(context, "이어하기", "${lastPath['level']} D-${lastPath['day_index'] + 1}", Icons.history_rounded, pointColor, isDarkMode, () async {
@@ -267,10 +272,10 @@ class _HomePageState extends State<HomePage> {
                                       final allChunks = await viewModel.loadLevelWords(lastPath['level']);
                                       if (context.mounted) Navigator.push(context, MaterialPageRoute(builder: (context) => WordListPage(level: lastPath['level'], initialDayIndex: lastPath['day_index'], allDayChunks: allChunks)));
                                     })
-                                  : _buildDashCard(context, "북마크", "중요 단어 보기", Icons.star_rounded, Colors.amber, isDarkMode, () => Navigator.push(context, MaterialPageRoute(builder: (context) => const BookmarkPage()))),
+                                  : _buildDashCard(context, "기록 없음", "학습을 시작하세요🐾", Icons.hourglass_empty_rounded, Colors.grey, isDarkMode, null),
                             ),
                             const SizedBox(width: 12),
-                            // Right Card: Diagnostic Test (Resuming or New) OR Recommended Result
+                            // Right Card: Diagnostic Test or Result
                             Expanded(
                               child: recommendedLevel != null
                                   ? _buildDashCard(context, "추천 레벨", "$recommendedLevel 과정", Icons.workspace_premium_rounded, pointColor, isDarkMode, () => Navigator.push(context, MaterialPageRoute(builder: (context) => LevelSummaryPage(level: recommendedLevel))))
@@ -338,7 +343,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildDashCard(BuildContext context, String title, String subtitle, IconData icon, Color color, bool isDarkMode, VoidCallback onTap) {
+  Widget _buildDashCard(BuildContext context, String title, String subtitle, IconData icon, Color color, bool isDarkMode, VoidCallback? onTap) {
     return GestureDetector(
       onTap: onTap,
       child: Container(

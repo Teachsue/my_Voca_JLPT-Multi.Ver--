@@ -37,7 +37,8 @@ class SupabaseService {
       await _client.auth.signInWithOAuth(
         OAuthProvider.google,
         redirectTo: kIsWeb ? null : redirectUrl,
-        authScreenLaunchMode: LaunchMode.inAppBrowserView,
+        // 안드로이드 시스템이 딥링크를 낚아채서 앱을 열고 창을 닫게 하려면 externalApplication이 가장 안정적입니다.
+        authScreenLaunchMode: LaunchMode.externalApplication,
       );
     } catch (e) {
       debugPrint("❌ 구글 로그인 에러 발생: $e");
@@ -134,7 +135,6 @@ class SupabaseService {
           'id': stableId, 
           'nickname': box.get('user_nickname'), 
           'recommended_level': box.get('recommended_level'),
-          // [수정] 서버의 테마 설정을 무시하고 현재 기기의 설정을 유지하도록 함
           'is_dark_mode': box.get('dark_mode') == true || box.get('dark_mode').toString() == 'true',
           'app_theme': box.get('app_theme', defaultValue: 'auto'),
           'last_study_path': box.get('last_study_path'),
@@ -160,7 +160,6 @@ class SupabaseService {
       'nickname': initialNickname,
       'auth_id': currentUser.id,
       'recommended_level': box.get('recommended_level'),
-      // 서버 저장용 필드는 남겨두되, 초기값은 굳이 동기화하지 않음
       'last_study_level': null,
       'last_study_day': null,
       'last_study_at': null,
@@ -208,9 +207,6 @@ class SupabaseService {
       await box.put('stable_user_id', remoteSid);
       await box.put('user_nickname', profile['nickname']);
       await box.put('recommended_level', profile['recommended_level']);
-      
-      // [수정] 테마 및 다크모드 동기화 코드 제거
-      // 이제 서버 데이터를 가져오더라도 기기의 테마 설정은 변하지 않습니다.
 
       if (profile['last_study_level'] != null) {
         await box.put('last_study_path', {
@@ -273,7 +269,6 @@ class SupabaseService {
         'nickname': box.get('user_nickname'),
         'auth_id': currentUser.id,
         'recommended_level': box.get('recommended_level'),
-        // [수정] 업로드 시에도 테마 설정 필드 제외 (또는 기존 값 유지)
       }, onConflict: 'id');
 
       if (clearFirst) await _client.from('user_progress').delete().eq('user_id', sid);
@@ -389,16 +384,36 @@ class SupabaseService {
   }
 
   static Future<void> clearAllProgress() async {
+    final box = Hive.box(DatabaseService.sessionBoxName);
+    
+    // 1. 로컬 이어하기 정보 삭제
+    await box.delete('last_study_path');
+    for (int i = 1; i <= 5; i++) {
+      await box.delete('last_day_N$i');
+    }
+    await box.delete('last_day_히라가나');
+    await box.delete('last_day_가타카나');
+
     if (isGoogleLinked) {
       await _safeRequest(() async {
-        await _client.from('user_progress').delete().eq('user_id', stableId);
-        await _client.from('study_logs').delete().eq('user_id', stableId);
+        final sid = stableId;
+        // 2. 서버 학습 기록 삭제
+        await _client.from('user_progress').delete().eq('user_id', sid);
+        await _client.from('study_logs').delete().eq('user_id', sid);
+        
+        // 3. 서버 프로필의 이어하기 정보 및 추천 레벨 초기화
         final currentUser = _client.auth.currentUser;
         if (currentUser != null) {
-          await _client.from('profiles').update({'recommended_level': null}).eq('auth_id', currentUser.id);
+          await _client.from('profiles').update({
+            'recommended_level': null,
+            'last_study_level': null,
+            'last_study_day': null,
+            'last_study_at': null,
+          }).eq('auth_id', currentUser.id);
         }
       });
     }
+    debugPrint("🗑️ 모든 학습 기록 및 이어하기 정보가 초기화되었습니다.");
   }
 
   static Future<void> resetWrongAnswers() async {
