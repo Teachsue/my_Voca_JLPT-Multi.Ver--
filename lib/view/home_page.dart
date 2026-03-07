@@ -26,6 +26,7 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   String _nickname = '냥냥이';
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   @override
   void initState() {
@@ -43,6 +44,28 @@ class _HomePageState extends State<HomePage> {
   void _refresh() {
     if (mounted) setState(() {});
     _loadUserProfile();
+  }
+
+  Future<void> _migrateData() async {
+    if (!mounted) return;
+    showDialog(context: context, barrierDismissible: false, builder: (context) => const Center(child: CircularProgressIndicator()));
+    try {
+      final List<String> files = ['hiragana.json', 'katakana.json', 'n1.json', 'n2.json', 'n3.json', 'n4.json', 'n5.json'];
+      List<Word> allWords = [];
+      for (String file in files) {
+        final String content = await rootBundle.loadString('assets/data/$file');
+        final Map<String, dynamic> data = json.decode(content);
+        final List<dynamic> vocabList = data['vocabulary'];
+        for (var item in vocabList) { allWords.add(Word.fromJson(item)); }
+      }
+      await SupabaseService.bulkUpsertWords(allWords);
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('✨ ${allWords.length}개 단어 마이그레이션 성공!')));
+      }
+    } catch (e) {
+      if (mounted) Navigator.pop(context);
+    }
   }
 
   Color _getThemePointColor(bool isDarkMode, String appTheme) {
@@ -109,7 +132,52 @@ class _HomePageState extends State<HomePage> {
             isDarkMode: isDarkMode,
             appTheme: appTheme,
             child: Scaffold(
+              key: _scaffoldKey,
               backgroundColor: Colors.transparent,
+              drawer: SupabaseService.isAdmin
+                  ? Drawer(
+                      child: ListView(
+                        padding: EdgeInsets.zero,
+                        children: [
+                          DrawerHeader(
+                            decoration: BoxDecoration(color: pointColor),
+                            child: const Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                Icon(Icons.admin_panel_settings, color: Colors.white, size: 40),
+                                SizedBox(height: 10),
+                                Text('관리자 메뉴', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+                              ],
+                            ),
+                          ),
+                          ListTile(
+                            leading: const Icon(Icons.cloud_upload_rounded, color: Colors.blue),
+                            title: const Text('단어 마이그레이션'),
+                            subtitle: const Text('로컬 JSON을 Supabase로 업로드합니다.'),
+                            onTap: () { Navigator.pop(context); _migrateData(); },
+                          ),
+                          ListTile(
+                            leading: const Icon(Icons.restart_alt_rounded, color: Colors.red),
+                            title: const Text('로컬 버전 초기화'),
+                            subtitle: const Text('내 폰의 버전을 0.0으로 리셋합니다.'),
+                            onTap: () async {
+                              Navigator.pop(context);
+                              final sessionBox = Hive.box(DatabaseService.sessionBoxName);
+                              await sessionBox.put('master_data_version', 0.0);
+                              if (mounted) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('🧹 초기화 완료'))); }
+                            },
+                          ),
+                          const Divider(),
+                          ListTile(
+                            leading: const Icon(Icons.info_outline),
+                            title: const Text('데이터 버전'),
+                            subtitle: Text(box.get('master_data_version', defaultValue: 1.0).toString()),
+                          ),
+                        ],
+                      ),
+                    )
+                  : null,
               body: SafeArea(
                 child: SingleChildScrollView(
                   physics: const BouncingScrollPhysics(),
@@ -118,17 +186,33 @@ class _HomePageState extends State<HomePage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // [1] Header (Slightly larger)
+                        // [1] Header (Fixed Overflow & Hidden Admin Access)
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text('반가워요, $_nickname님! 👋', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-                                Text('오늘도 즐겁게 일본어 공부해요🐾', style: TextStyle(fontSize: 13, color: subTextColor, fontWeight: FontWeight.w500)),
-                              ],
+                            Expanded(
+                              child: GestureDetector(
+                                onDoubleTap: () {
+                                  if (SupabaseService.isAdmin) {
+                                    _scaffoldKey.currentState?.openDrawer();
+                                  }
+                                },
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text('반가워요, $_nickname님! 👋', 
+                                      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    Text('오늘도 즐겁게 일본어 공부해요🐾', 
+                                      style: TextStyle(fontSize: 13, color: subTextColor, fontWeight: FontWeight.w500),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ),
+                            const SizedBox(width: 12),
                             Row(
                               children: [
                                 _buildHeaderIcon(Icons.settings_rounded, () async { await Navigator.push(context, MaterialPageRoute(builder: (context) => const StatisticsPage())); _refresh(); }, isDarkMode),
@@ -140,7 +224,7 @@ class _HomePageState extends State<HomePage> {
                         ),
                         const SizedBox(height: 20),
 
-                        // [2] Main Banner (Larger)
+                        // [2] Main Banner
                         ValueListenableBuilder(
                           valueListenable: Hive.box(DatabaseService.sessionBoxName).listenable(keys: [isCompletedKey]),
                           builder: (context, box, child) {
@@ -183,7 +267,7 @@ class _HomePageState extends State<HomePage> {
                         ),
                         const SizedBox(height: 16),
 
-                        // [3] Dashboard Row (Larger)
+                        // [3] Dashboard Row
                         if (lastPath != null || recommendedLevel == null)
                           Row(
                             children: [
@@ -219,7 +303,7 @@ class _HomePageState extends State<HomePage> {
                         ),
                         const SizedBox(height: 20),
 
-                        // [5] Level Study (Larger cards)
+                        // [5] Level Study
                         const Text("레벨별 학습", style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
                         const SizedBox(height: 10),
                         GridView.count(
@@ -239,7 +323,7 @@ class _HomePageState extends State<HomePage> {
                         ),
                         const SizedBox(height: 20),
 
-                        // [6] My Management (Taller)
+                        // [6] My Management
                         const Text("나의 관리", style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
                         const SizedBox(height: 10),
                         Row(
@@ -261,8 +345,6 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
-
-  // --- 가독성 & 조화 중심의 위젯들 ---
 
   Widget _buildDashCard(BuildContext context, String title, String subtitle, IconData icon, Color color, bool isDarkMode, VoidCallback onTap) {
     return GestureDetector(
@@ -296,10 +378,7 @@ class _HomePageState extends State<HomePage> {
 
   Widget _buildLevelCard(BuildContext context, String level, String desc, Color color, bool isDarkMode) {
     return GestureDetector(
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(builder: (context) => LevelSummaryPage(level: level)),
-      ),
+      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => LevelSummaryPage(level: level))),
       child: Container(
         decoration: BoxDecoration(
           color: isDarkMode ? Colors.white.withOpacity(0.1) : Colors.white.withOpacity(0.9),
@@ -353,7 +432,6 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // --- 팝업 로직 유지 ---
   void _showLevelTestGuide(BuildContext context, Color themeColor, bool isDarkMode) {
     showDialog(context: context, builder: (context) => Dialog(backgroundColor: Colors.transparent, child: Container(padding: const EdgeInsets.fromLTRB(24, 32, 24, 24), decoration: BoxDecoration(color: isDarkMode ? const Color(0xFF2D3436) : Colors.white, borderRadius: BorderRadius.circular(32), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.15), blurRadius: 20, offset: const Offset(0, 10))]), child: Column(mainAxisSize: MainAxisSize.min, children: [Container(padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: themeColor.withOpacity(0.12), shape: BoxShape.circle), child: Icon(Icons.auto_awesome_rounded, color: themeColor, size: 40)), const SizedBox(height: 24), Text("정밀 실력 진단", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 24, color: isDarkMode ? Colors.white : Colors.black87)), const SizedBox(height: 12), Text("JLPT N1~N5 전 범위를 분석하여\n가장 효율적인 학습 레벨을 추천해 드립니다.", textAlign: TextAlign.center, style: TextStyle(fontSize: 14, color: isDarkMode ? Colors.white70 : Colors.blueGrey, height: 1.6)), const SizedBox(height: 24), _buildGuideItem(Icons.playlist_add_check_rounded, "총 30개 문항 (레벨별 핵심 단어)", isDarkMode, themeColor), _buildGuideItem(Icons.timer_outlined, "예상 소요 시간: 약 10분", isDarkMode, themeColor), _buildGuideItem(Icons.analytics_outlined, "취약 구간 분석 및 맞춤형 로드맵", isDarkMode, themeColor), const SizedBox(height: 32), Row(children: [Expanded(child: TextButton(onPressed: () => Navigator.pop(context), style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)), child: Text("나중에", style: TextStyle(color: isDarkMode ? Colors.white24 : Colors.grey, fontWeight: FontWeight.bold)))), const SizedBox(width: 12), Expanded(child: ElevatedButton(onPressed: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (context) => const LevelTestPage(shouldResume: false))); }, style: ElevatedButton.styleFrom(backgroundColor: themeColor, foregroundColor: Colors.white, elevation: 0, padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))), child: const Text("테스트 시작", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16))))])]))));
   }
