@@ -134,6 +134,7 @@ class SupabaseService {
           'id': stableId, 
           'nickname': box.get('user_nickname'), 
           'recommended_level': box.get('recommended_level'),
+          // [수정] 서버의 테마 설정을 무시하고 현재 기기의 설정을 유지하도록 함
           'is_dark_mode': box.get('dark_mode') == true || box.get('dark_mode').toString() == 'true',
           'app_theme': box.get('app_theme', defaultValue: 'auto'),
           'last_study_path': box.get('last_study_path'),
@@ -159,8 +160,7 @@ class SupabaseService {
       'nickname': initialNickname,
       'auth_id': currentUser.id,
       'recommended_level': box.get('recommended_level'),
-      'is_dark_mode': box.get('dark_mode') == true || box.get('dark_mode').toString() == 'true',
-      'app_theme': box.get('app_theme', defaultValue: 'auto'),
+      // 서버 저장용 필드는 남겨두되, 초기값은 굳이 동기화하지 않음
       'last_study_level': null,
       'last_study_day': null,
       'last_study_at': null,
@@ -201,17 +201,16 @@ class SupabaseService {
       final box = Hive.box(DatabaseService.sessionBoxName);
       final wordBox = Hive.box<Word>(DatabaseService.boxName);
       
-      // 1. 서버 프로필 가져오기
       final profile = await fetchRemoteProfile();
       if (profile == null) return;
 
-      // 2. 기기 ID 및 기본 설정 동기화
       final String remoteSid = profile['id'];
       await box.put('stable_user_id', remoteSid);
       await box.put('user_nickname', profile['nickname']);
       await box.put('recommended_level', profile['recommended_level']);
-      await box.put('dark_mode', profile['is_dark_mode'] == true || profile['is_dark_mode']?.toString() == 'true');
-      await box.put('app_theme', profile['app_theme'] ?? 'auto');
+      
+      // [수정] 테마 및 다크모드 동기화 코드 제거
+      // 이제 서버 데이터를 가져오더라도 기기의 테마 설정은 변하지 않습니다.
 
       if (profile['last_study_level'] != null) {
         await box.put('last_study_path', {
@@ -221,8 +220,7 @@ class SupabaseService {
         });
       }
 
-      // 3. [핵심] 현재 로컬의 모든 단어 학습 상태 초기화 (Clean Sync 준비)
-      debugPrint("🧹 로컬 학습 기록 초기화 중 (서버 데이터로 교체하기 위함)...");
+      debugPrint("🧹 로컬 학습 기록 초기화 중...");
       for (var word in wordBox.values) {
         if (word.is_bookmarked || word.is_wrong_note || word.status != 'unlearned') {
           word.is_bookmarked = false;
@@ -236,7 +234,6 @@ class SupabaseService {
         }
       }
 
-      // 4. 서버로부터 학습 데이터 수신
       final List<dynamic> response = await _client.from('user_progress').select().eq('user_id', remoteSid);
       debugPrint("📥 서버에서 ${response.length}개의 최신 학습 기록 수신 완료.");
 
@@ -255,7 +252,7 @@ class SupabaseService {
           await word.save();
         }
       }
-      debugPrint("✅ 클라우드 데이터 완벽 동기화(덮어쓰기) 완료!");
+      debugPrint("✅ 학습 데이터 동기화 완료! (UI 설정 유지)");
     });
   }
 
@@ -276,8 +273,7 @@ class SupabaseService {
         'nickname': box.get('user_nickname'),
         'auth_id': currentUser.id,
         'recommended_level': box.get('recommended_level'),
-        'is_dark_mode': box.get('dark_mode') == true,
-        'app_theme': box.get('app_theme', defaultValue: 'auto'),
+        // [수정] 업로드 시에도 테마 설정 필드 제외 (또는 기존 값 유지)
       }, onConflict: 'id');
 
       if (clearFirst) await _client.from('user_progress').delete().eq('user_id', sid);
