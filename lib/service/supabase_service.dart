@@ -167,19 +167,29 @@ class SupabaseService {
   static Future<void> downloadProgressFromServer() async {
     if (!isGoogleLinked) return;
     await _safeRequest(() async {
-      final String sid = stableId;
       final box = Hive.box(DatabaseService.sessionBoxName);
       
+      // 1. 서버에서 프로필을 먼저 가져옵니다.
       final profile = await fetchRemoteProfile();
-      if (profile != null) {
-        // [명시적 저장] 사용자가 '다운로드'를 원했을 때만 여기서 저장합니다.
-        await box.put('user_nickname', profile['nickname']);
-        await box.put('recommended_level', profile['recommended_level']);
-        await box.put('dark_mode', profile['is_dark_mode'] == true || profile['is_dark_mode']?.toString() == 'true');
-        await box.put('app_theme', profile['app_theme'] ?? 'auto');
+      if (profile == null) {
+        debugPrint("⚠️ 서버에 프로필이 없어 다운로드할 데이터가 없습니다.");
+        return;
       }
 
-      final List<dynamic> response = await _client.from('user_progress').select().eq('user_id', sid);
+      // 2. [핵심] 현재 기기의 SID를 서버 프로필에 등록된 ID로 강제 변경합니다.
+      // 이렇게 해야 여러 기기에서 동일한 계정 데이터로 묶이게 됩니다.
+      final String remoteSid = profile['id'];
+      await box.put('stable_user_id', remoteSid);
+      debugPrint("🆔 기기 ID를 서버 계정 ID($remoteSid)와 동기화했습니다.");
+
+      // 3. 프로필 정보 업데이트
+      await box.put('user_nickname', profile['nickname']);
+      await box.put('recommended_level', profile['recommended_level']);
+      await box.put('dark_mode', profile['is_dark_mode'] == true || profile['is_dark_mode']?.toString() == 'true');
+      await box.put('app_theme', profile['app_theme'] ?? 'auto');
+
+      // 4. 변경된 ID로 학습 데이터를 조회합니다.
+      final List<dynamic> response = await _client.from('user_progress').select().eq('user_id', remoteSid);
       debugPrint("📥 서버에서 ${response.length}개의 학습 기록을 수신했습니다.");
       
       final wordBox = Hive.box<Word>(DatabaseService.boxName);
@@ -191,9 +201,11 @@ class SupabaseService {
           final bool serverBookmarked = row['is_bookmarked'] == true || row['is_bookmarked']?.toString() == 'true';
           final bool serverWrong = row['is_wrong_note'] == true || row['is_wrong_note']?.toString() == 'true';
 
+          // 북마크와 오답노트는 서버와 로컬 중 하나라도 되어있으면 유지 (OR 조건)
           word.is_bookmarked = word.is_bookmarked || serverBookmarked;
           word.is_wrong_note = word.is_wrong_note || serverWrong;
 
+          // 학습 진도는 더 많이 맞춘 쪽(더 최신 기록)을 우선함
           if (serverCorrect > word.correct_count) {
             word.correct_count = serverCorrect;
             word.incorrect_count = int.tryParse(row['incorrect_count']?.toString() ?? '0') ?? 0;
@@ -214,17 +226,29 @@ class SupabaseService {
     if (currentUser == null) return;
 
     await _safeRequest(() async {
-      final sid = stableId;
       final box = Hive.box(DatabaseService.sessionBoxName);
+
+      // 1. 서버에 이미 프로필이 있는지 확인합니다.
+      final remoteProfile = await fetchRemoteProfile();
+      if (remoteProfile != null) {
+        // 이미 서버에 데이터가 있다면 그 ID(SID)를 사용해야 충돌이 없습니다.
+        final String remoteSid = remoteProfile['id'];
+        await box.put('stable_user_id', remoteSid);
+        debugPrint("🆔 기존 서버 계정 ID($remoteSid)를 사용하여 업로드합니다.");
+      }
+
+      final sid = stableId; // 위에서 갱신되었다면 remoteSid, 아니라면 현재 sid
 
       debugPrint("📤 로컬 데이터를 서버로 강제 주입합니다... (clearFirst: $clearFirst)");
 
-      await _client.from('profiles').update({
+      await _client.from('profiles').upsert({
+        'id': sid,
         'nickname': box.get('user_nickname'),
+        'auth_id': currentUser.id,
         'recommended_level': box.get('recommended_level'),
         'is_dark_mode': box.get('dark_mode') == true || box.get('dark_mode').toString() == 'true',
         'app_theme': box.get('app_theme', defaultValue: 'auto'),
-      }).eq('auth_id', currentUser.id);
+      }, onConflict: 'id');
 
       if (clearFirst) {
         await _client.from('user_progress').delete().eq('user_id', sid);
