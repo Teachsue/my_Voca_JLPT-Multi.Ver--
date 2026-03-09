@@ -249,10 +249,15 @@ class StudyViewModel extends ChangeNotifier {
   Future<void> syncProgressToServer() async {
     if (SupabaseService.isGoogleLinked) {
       await SupabaseService.uploadLocalDataToCloud();
+      
+      // 오늘의 단어 모드(day == 0)에서 만점 여부 확인
+      bool isTodaysPerfect = (_currentDay == 0 && score == total && total > 0);
+
       await SupabaseService.updateStudyLog(
         learnedCount: sessionWords.where((w) => w.correct_count == 1).length,
         reviewCount: sessionWords.where((w) => w.correct_count > 1).length,
         testScore: total > 0 ? (score / total) * 100 : 0,
+        isTodaysPerfect: isTodaysPerfect, // [추가] 만점 여부 서버 전송
       );
     }
   }
