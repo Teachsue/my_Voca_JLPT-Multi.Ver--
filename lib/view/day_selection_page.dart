@@ -28,23 +28,19 @@ class _DaySelectionPageState extends State<DaySelectionPage> {
 
   void _calculateDayChunks() {
     final String levelStr = widget.level.replaceAll(RegExp(r'[^0-9]'), '');
-    final int levelInt = int.tryParse(levelStr) ?? 5; // 기본값 N5
+    final int levelInt = int.tryParse(levelStr) ?? 5;
     final List<Word> allWords = DatabaseService.getWordsByLevel(levelInt);
     if (allWords.isEmpty) return;
     
-    // 1. ID 순으로 정렬 후 고정 시드(42)로 셔플하여 순서 고정 (메인 페이지 로직과 일치)
-    // 비슷한 발음의 단어가 모이는 것을 방지하기 위해 섞어서 보여줌
     allWords.sort((a, b) => a.id.compareTo(b.id)); 
     allWords.shuffle(Random(42)); 
     
-    // 2. 모든 레벨 Day당 20개씩 단어 묶기
     final List<List<Word>> chunks = [];
     const int chunkSize = 20;
     for (int i = 0; i < allWords.length; i += chunkSize) {
       int end = (i + chunkSize < allWords.length) ? i + chunkSize : allWords.length;
       List<Word> chunk = allWords.sublist(i, end);
       
-      // 마지막 묶음이 10개 미만이면 이전 묶음에 합침 (단, 이전 묶음이 존재할 때만)
       if (chunks.isNotEmpty && chunk.length < 10) {
         chunks.last.addAll(chunk);
       } else {
@@ -54,7 +50,6 @@ class _DaySelectionPageState extends State<DaySelectionPage> {
     _allDayChunks = chunks;
   }
 
-  // 계절 및 모드에 따른 배너 색상을 가져오는 함수
   List<Color> _getBannerColors(bool isDarkMode) {
     final sessionBox = Hive.box(DatabaseService.sessionBoxName);
     final String appTheme = sessionBox.get('app_theme', defaultValue: 'auto');
@@ -111,20 +106,33 @@ class _DaySelectionPageState extends State<DaySelectionPage> {
         ],
       ),
       body: ValueListenableBuilder(
-        valueListenable: Hive.box(DatabaseService.sessionBoxName).listenable(keys: ['last_day_${widget.level}']),
+        valueListenable: Hive.box(DatabaseService.sessionBoxName).listenable(),
         builder: (context, sessionBox, _) {
-          final int lastDay = sessionBox.get('last_day_${widget.level}', defaultValue: 0);
+          // [복구] 마지막 학습 경로 정보 가져오기
+          final Map<dynamic, dynamic>? lastPath = sessionBox.get('last_study_path');
+          int? lastDayIndex;
+          if (lastPath != null && lastPath['level'] == widget.level) {
+            lastDayIndex = lastPath['day_index'];
+          }
+
           return ValueListenableBuilder(
             valueListenable: Hive.box<Word>(DatabaseService.boxName).listenable(),
             builder: (context, Box<Word> box, _) {
               if (_allDayChunks.isEmpty) return Center(child: CircularProgressIndicator(color: const Color(0xFF5B86E5)));
-              final filteredDays = _searchQuery.isEmpty ? List.generate(_allDayChunks.length, (i) => i) : List.generate(_allDayChunks.length, (i) => i).where((index) => (index + 1).toString().contains(_searchQuery)).toList();
+              final filteredDays = _searchQuery.isEmpty 
+                  ? List.generate(_allDayChunks.length, (i) => i) 
+                  : List.generate(_allDayChunks.length, (i) => i).where((index) => (index + 1).toString().contains(_searchQuery)).toList();
+              
               if (filteredDays.isEmpty) return Center(child: Text('검색 결과가 없습니다.', style: TextStyle(color: textColor)));
 
               return Column(
                 children: [
-                  if (!_isSearching && lastDay > 0 && _searchQuery.isEmpty)
-                    Padding(padding: const EdgeInsets.fromLTRB(20, 10, 20, 0), child: _buildResumeCard(context, lastDay, isDarkMode, bannerColors)),
+                  // [복구] 최근 공부한 DAY 요약 카드
+                  if (!_isSearching && lastDayIndex != null && _searchQuery.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 10, 20, 0), 
+                      child: _buildResumeCard(context, lastDayIndex + 1, isDarkMode, bannerColors)
+                    ),
                   Expanded(
                     child: GridView.builder(
                       padding: const EdgeInsets.fromLTRB(20, 20, 20, 60),
@@ -132,7 +140,7 @@ class _DaySelectionPageState extends State<DaySelectionPage> {
                       itemCount: filteredDays.length,
                       itemBuilder: (context, index) {
                         final dayIndex = filteredDays[index];
-                        return _buildDayGridItem(context, dayIndex + 1, _allDayChunks[dayIndex], (dayIndex + 1) == lastDay, isDarkMode);
+                        return _buildDayGridItem(context, dayIndex + 1, _allDayChunks[dayIndex], dayIndex == lastDayIndex, isDarkMode);
                       },
                     ),
                   ),
@@ -155,7 +163,7 @@ class _DaySelectionPageState extends State<DaySelectionPage> {
           borderRadius: BorderRadius.circular(20),
           boxShadow: isDarkMode ? [] : [BoxShadow(color: bannerColors[0].withOpacity(0.3), blurRadius: 10, offset: const Offset(0, 4))],
         ),
-        child: Row(children: [Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), shape: BoxShape.circle), child: const Icon(Icons.history_rounded, color: Colors.white, size: 28)), const SizedBox(width: 16), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('이어서 학습하기', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500)), const SizedBox(height: 2), Text('DAY $lastDay', style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold))])), const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white, size: 20)]),
+        child: Row(children: [Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), shape: BoxShape.circle), child: const Icon(Icons.history_rounded, color: Colors.white, size: 28)), const SizedBox(width: 16), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('최근 공부한 DAY', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500)), const SizedBox(height: 2), Text('DAY $lastDay', style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold))])), const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white, size: 20)]),
       ),
     );
   }

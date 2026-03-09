@@ -8,6 +8,7 @@ import '../view_model/study_view_model.dart';
 import '../service/database_service.dart';
 import '../service/supabase_service.dart';
 import 'level_summary_page.dart';
+import 'day_selection_page.dart';
 import 'bookmark_page.dart';
 import 'wrong_answer_page.dart';
 import 'statistics_page.dart';
@@ -52,7 +53,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _migrateData() async {
-    if (!mounted) return;
+    if (!mounted) {
+      return;
+    }
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -94,7 +97,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   Color _getThemePointColor(bool isDarkMode, String appTheme) {
-    if (isDarkMode) return const Color(0xFF5B86E5);
+    if (isDarkMode) {
+      return const Color(0xFF5B86E5);
+    }
     int month = DateTime.now().month;
     String target = appTheme;
     if (target == 'auto') {
@@ -122,7 +127,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   List<Color> _getBannerColors(bool isDarkMode, String appTheme) {
-    if (isDarkMode) return [const Color(0xFF3F4E4F), const Color(0xFF2C3333)];
+    if (isDarkMode) {
+      return [const Color(0xFF3F4E4F), const Color(0xFF2C3333)];
+    }
     int month = DateTime.now().month;
     String target = appTheme;
     if (target == 'auto') {
@@ -182,7 +189,9 @@ class _HomePageState extends State<HomePage> {
           child: PopScope(
             canPop: false,
             onPopInvokedWithResult: (didPop, result) async {
-              if (didPop) return;
+              if (didPop) {
+                return;
+              }
               final bool shouldPop = await _showExitDialog(context, isDarkMode);
               if (shouldPop && context.mounted) {
                 SystemNavigator.pop();
@@ -312,31 +321,32 @@ class _HomePageState extends State<HomePage> {
                           ],
                         ),
                         const SizedBox(height: 20),
-                          ValueListenableBuilder(
-                            valueListenable: Hive.box(DatabaseService.sessionBoxName).listenable(keys: [isCompletedKey]),
-                            builder: (context, box, child) {
-                              final bool isCompleted = box.get(isCompletedKey, defaultValue: false);
-                              return GestureDetector(
-                                onTap: () async {
-                                  // [복구] 전역 Provider를 통해 오늘의 단어 로드
-                                  final viewModel = context.read<StudyViewModel>();
-                                  final List<Word> todaysWords = await viewModel.loadTodaysWords();
-                                  
-                                  if (context.mounted) {
-                                    // 학습 리스트 페이지로 이동 (이미 고정된 10개 단어가 전달됨)
-                                    await Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (context) => WordListPage(
-                                          level: isCompleted ? '오늘의 단어 복습' : '오늘의 단어', 
-                                          initialDayIndex: 0, 
-                                          allDayChunks: [todaysWords]
-                                        ),
-                                      ),
-                                    );
-                                    _refresh();
-                                  }
-                                },
+                        ValueListenableBuilder(
+                          valueListenable: Hive.box(DatabaseService.sessionBoxName)
+                              .listenable(keys: [isCompletedKey]),
+                          builder: (context, box, child) {
+                            final bool isCompleted =
+                                box.get(isCompletedKey, defaultValue: false);
+                            return GestureDetector(
+                              onTap: () async {
+                                final viewModel = context.read<StudyViewModel>();
+                                final List<Word> todaysWords =
+                                    await viewModel.loadTodaysWords();
+                                if (context.mounted) {
+                                  await Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => WordListPage(
+                                          level: isCompleted
+                                              ? '오늘의 단어 복습'
+                                              : '오늘의 단어',
+                                          initialDayIndex: 0,
+                                          allDayChunks: [todaysWords]),
+                                    ),
+                                  );
+                                  _refresh();
+                                }
+                              },
                               child: Container(
                                 width: double.infinity,
                                 padding: const EdgeInsets.symmetric(
@@ -356,7 +366,7 @@ class _HomePageState extends State<HomePage> {
                                     BoxShadow(
                                         color: isCompleted
                                             ? Colors.black12
-                                            : bannerColors[0].withOpacity(0.3),
+                                            : bannerColors[0].withValues(alpha: 0.3),
                                         blurRadius: 15,
                                         offset: const Offset(0, 8))
                                   ],
@@ -383,7 +393,7 @@ class _HomePageState extends State<HomePage> {
                                                   : "매일 10개씩 꾸준히 시작하세요.",
                                               style: TextStyle(
                                                   color: Colors.white
-                                                      .withOpacity(0.9),
+                                                      .withValues(alpha: 0.9),
                                                   fontSize: 14)),
                                         ],
                                       ),
@@ -408,10 +418,14 @@ class _HomePageState extends State<HomePage> {
                                       Icons.history_rounded,
                                       pointColor,
                                       isDarkMode, () async {
-                                      final viewModel = StudyViewModel();
+                                      final viewModel = context.read<StudyViewModel>();
                                       final allChunks = await viewModel
                                           .loadLevelWords(lastPath['level']);
                                       if (context.mounted) {
+                                        Navigator.push(
+                                            context,
+                                            MaterialPageRoute(
+                                                builder: (context) => DaySelectionPage(level: lastPath['level'])));
                                         Navigator.push(
                                             context,
                                             MaterialPageRoute(
@@ -588,18 +602,18 @@ class _HomePageState extends State<HomePage> {
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
         decoration: BoxDecoration(
-          color: isDarkMode ? Colors.white.withOpacity(0.1) : Colors.white,
+          color: isDarkMode ? Colors.white.withValues(alpha: 0.1) : Colors.white,
           borderRadius: BorderRadius.circular(20),
           boxShadow: isDarkMode
               ? []
               : [
                   BoxShadow(
-                      color: Colors.black.withOpacity(0.03),
+                      color: Colors.black.withValues(alpha: 0.03),
                       blurRadius: 10,
                       offset: const Offset(0, 4))
                 ],
           border: Border.all(
-              color: isDarkMode ? Colors.white10 : color.withOpacity(0.15)),
+              color: isDarkMode ? Colors.white.withValues(alpha: 0.1) : color.withValues(alpha: 0.15)),
         ),
         child: Row(
           children: [
@@ -636,11 +650,11 @@ class _HomePageState extends State<HomePage> {
               builder: (context) => LevelSummaryPage(level: level))),
       child: Container(
         decoration: BoxDecoration(
-          color: isDarkMode ? Colors.white.withOpacity(0.1) : Colors.white.withOpacity(0.9),
+          color: isDarkMode ? Colors.white.withValues(alpha: 0.1) : Colors.white.withValues(alpha: 0.9),
           borderRadius: BorderRadius.circular(18),
           boxShadow: isDarkMode
               ? []
-              : [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 8)],
+              : [BoxShadow(color: Colors.black.withValues(alpha: 0.02), blurRadius: 8)],
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -667,11 +681,11 @@ class _HomePageState extends State<HomePage> {
       child: Container(
         padding: EdgeInsets.symmetric(vertical: isTall ? 18 : 14, horizontal: 14),
         decoration: BoxDecoration(
-          color: isDarkMode ? Colors.white.withOpacity(0.1) : Colors.white.withOpacity(0.9),
+          color: isDarkMode ? Colors.white.withValues(alpha: 0.1) : Colors.white.withValues(alpha: 0.9),
           borderRadius: BorderRadius.circular(20),
           boxShadow: isDarkMode
               ? []
-              : [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 10)],
+              : [BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 10)],
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -701,8 +715,8 @@ class _HomePageState extends State<HomePage> {
       height: 44,
       decoration: BoxDecoration(
           color: isDarkMode
-              ? Colors.white.withOpacity(0.1)
-              : Colors.white.withOpacity(0.8),
+              ? Colors.white.withValues(alpha: 0.1)
+              : Colors.white.withValues(alpha: 0.8),
           shape: BoxShape.circle),
       child: IconButton(
           icon: Icon(icon, color: const Color(0xFF5B86E5), size: 22),
@@ -724,7 +738,7 @@ class _HomePageState extends State<HomePage> {
                     borderRadius: BorderRadius.circular(32),
                     boxShadow: [
                       BoxShadow(
-                          color: Colors.black.withOpacity(0.15),
+                          color: Colors.black.withValues(alpha: 0.15),
                           blurRadius: 20,
                           offset: const Offset(0, 10))
                     ]),
@@ -732,7 +746,7 @@ class _HomePageState extends State<HomePage> {
                   Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                          color: themeColor.withOpacity(0.12),
+                          color: themeColor.withValues(alpha: 0.12),
                           shape: BoxShape.circle),
                       child: Icon(Icons.auto_awesome_rounded,
                           color: themeColor, size: 40)),
@@ -809,7 +823,7 @@ class _HomePageState extends State<HomePage> {
                     borderRadius: BorderRadius.circular(32),
                     boxShadow: [
                       BoxShadow(
-                          color: Colors.black.withOpacity(0.15),
+                          color: Colors.black.withValues(alpha: 0.15),
                           blurRadius: 20,
                           offset: const Offset(0, 10))
                     ]),
@@ -817,7 +831,7 @@ class _HomePageState extends State<HomePage> {
                   Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                          color: themeColor.withOpacity(0.12),
+                          color: themeColor.withValues(alpha: 0.12),
                           shape: BoxShape.circle),
                       child: Icon(Icons.pending_actions_rounded,
                           color: themeColor, size: 40)),
@@ -886,7 +900,7 @@ class _HomePageState extends State<HomePage> {
           Container(
               padding: const EdgeInsets.all(6),
               decoration: BoxDecoration(
-                  color: themeColor.withOpacity(0.1),
+                  color: themeColor.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8)),
               child: Icon(icon, size: 18, color: themeColor)),
           const SizedBox(width: 12),
@@ -915,7 +929,7 @@ class _HomePageState extends State<HomePage> {
                     borderRadius: BorderRadius.circular(32),
                     boxShadow: [
                       BoxShadow(
-                          color: Colors.black.withOpacity(0.15),
+                          color: Colors.black.withValues(alpha: 0.15),
                           blurRadius: 20,
                           offset: const Offset(0, 10))
                     ]),
@@ -924,7 +938,7 @@ class _HomePageState extends State<HomePage> {
                       width: 72,
                       height: 72,
                       decoration: BoxDecoration(
-                          color: themeColor.withOpacity(0.12),
+                          color: themeColor.withValues(alpha: 0.12),
                           shape: BoxShape.circle),
                       child: Icon(Icons.pets_rounded, color: themeColor, size: 38)),
                   const SizedBox(height: 24),
@@ -942,7 +956,7 @@ class _HomePageState extends State<HomePage> {
                           height: 1.6,
                           color: isDarkMode
                               ? Colors.white60
-                              : Colors.blueGrey.withOpacity(0.8),
+                              : Colors.blueGrey.withValues(alpha: 0.8),
                           fontWeight: FontWeight.w500)),
                   const SizedBox(height: 32),
                   Row(children: [

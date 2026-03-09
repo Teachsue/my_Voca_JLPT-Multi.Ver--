@@ -73,8 +73,9 @@ class _QuizPageState extends State<QuizPage> with WidgetsBindingObserver {
     final int levelInt = _safeParseLevel(widget.level);
     final int dayInt = widget.day ?? -1;
 
+    // [복구] 이어풀기 세션 확인 (initialWords가 있어도 세션이 있다면 묻기)
     final savedSession = _viewModel.getSavedSession(levelInt, dayInt);
-    if (savedSession != null && widget.initialWords == null) {
+    if (savedSession != null) {
       final bool? resume = await _showResumeDialog();
       if (resume == true) {
         await _viewModel.resumeSession(levelInt, dayInt);
@@ -85,6 +86,7 @@ class _QuizPageState extends State<QuizPage> with WidgetsBindingObserver {
       }
     }
 
+    // 새로운 퀴즈 로드
     await _viewModel.loadWords(
       levelInt, 
       questionCount: widget.questionCount, 
@@ -143,13 +145,6 @@ class _QuizPageState extends State<QuizPage> with WidgetsBindingObserver {
       case 'autumn': return Colors.orangeAccent;
       default: return Colors.blueGrey;
     }
-  }
-
-  String _getLevelText(int level) {
-    if (level <= 5) return 'N$level';
-    if (level == 11) return '기초1';
-    if (level == 12) return '기초2';
-    return '-';
   }
 
   @override
@@ -293,18 +288,7 @@ class _QuizPageState extends State<QuizPage> with WidgetsBindingObserver {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start, 
                               children: [
-                                Row(
-                                  children: [
-                                    // 결과 리스트에 레벨 배지 추가
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(color: themeColor.withOpacity(0.1), borderRadius: BorderRadius.circular(4)),
-                                      child: Text(_getLevelText(word.level), style: TextStyle(color: themeColor, fontSize: 10, fontWeight: FontWeight.w900)),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Text('${word.kanji} (${word.kana})', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: textColor)),
-                                  ],
-                                ), 
+                                Text('${word.kanji} (${word.kana})', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: textColor)), 
                                 const SizedBox(height: 8), 
                                 Wrap(
                                   spacing: 12,
@@ -332,7 +316,6 @@ class _QuizPageState extends State<QuizPage> with WidgetsBindingObserver {
             ),
           ),
         ),
-        // 하단 버튼 영역 - 테마 색상 완벽 적용
         Container(
           padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
           decoration: BoxDecoration(
@@ -350,7 +333,7 @@ class _QuizPageState extends State<QuizPage> with WidgetsBindingObserver {
                   icon: const Icon(Icons.replay_rounded, size: 20),
                   label: const Text('다시 도전하기', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: themeColor, // 테마 색상 적용
+                    backgroundColor: themeColor,
                     foregroundColor: isDarkMode ? Colors.black87 : Colors.white,
                     elevation: 0,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
@@ -366,8 +349,8 @@ class _QuizPageState extends State<QuizPage> with WidgetsBindingObserver {
                   icon: const Icon(Icons.home_rounded, size: 20),
                   label: const Text('학습 마치기', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                   style: OutlinedButton.styleFrom(
-                    side: BorderSide(color: themeColor.withOpacity(0.5), width: 2), // 테마 테두리 적용
-                    foregroundColor: themeColor, // 테마 글자색 적용
+                    side: BorderSide(color: themeColor.withOpacity(0.5), width: 2),
+                    foregroundColor: themeColor,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
                   ),
                 ),
@@ -414,9 +397,9 @@ class _QuizPageState extends State<QuizPage> with WidgetsBindingObserver {
               children: [
                 const SizedBox(height: 10),
                 Container(
-                  constraints: const BoxConstraints(minHeight: 200),
+                  constraints: const BoxConstraints(minHeight: 180), // 배지 제거로 공간 여유 확보를 위해 높이 소폭 하향
                   alignment: Alignment.center, 
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 30),
                   decoration: BoxDecoration(
                     color: isDarkMode ? const Color(0xFF1E1E1E) : Colors.white, 
                     borderRadius: BorderRadius.circular(24),
@@ -426,13 +409,7 @@ class _QuizPageState extends State<QuizPage> with WidgetsBindingObserver {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      // [추가] 퀴즈 카드 상단에 난이도 배지 표시
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(color: themeColor.withOpacity(0.1), borderRadius: BorderRadius.circular(10)),
-                        child: Text(_getLevelText(word.level), style: TextStyle(color: themeColor, fontSize: 11, fontWeight: FontWeight.w900)),
-                      ),
-                      const SizedBox(height: 16),
+                      // [삭제] 이미 레벨을 선택하고 왔으므로 상단 레벨 배지 제거 (공간 확보)
                       if (type == QuizType.kanjiToMeaning) ...[
                         Visibility(
                           maintainSize: true,

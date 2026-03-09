@@ -35,6 +35,9 @@ class _WordListPageState extends State<WordListPage> {
   }
 
   void _saveStudyPath() {
+    // [수정] 오늘의 단어 모드일 때는 마지막 학습 경로를 저장하지 않음
+    if (widget.level.contains('오늘')) return;
+
     final sessionBox = Hive.box(DatabaseService.sessionBoxName);
     sessionBox.put('last_study_path', {
       'level': widget.level,
@@ -120,6 +123,7 @@ class _WordListPageState extends State<WordListPage> {
   }
 
   Widget _buildWordList(List<Word> words, bool isDarkMode, Color textColor, Color themeColor) {
+    bool isTodaysMode = widget.level.contains('오늘');
     return ListView.separated(
       padding: const EdgeInsets.fromLTRB(20, 10, 20, 100),
       itemCount: words.length,
@@ -153,13 +157,15 @@ class _WordListPageState extends State<WordListPage> {
                   children: [
                     Row(
                       children: [
-                        // [복구] 난이도 등급 배지
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(color: themeColor.withOpacity(0.15), borderRadius: BorderRadius.circular(6)),
-                          child: Text(_getLevelText(word.level), style: TextStyle(color: themeColor, fontSize: 10, fontWeight: FontWeight.w900)),
-                        ),
-                        const SizedBox(width: 8),
+                        // [수정] 오늘의 단어 모드에서만 난이도 등급 배지 표시
+                        if (isTodaysMode) ...[
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(color: themeColor.withOpacity(0.15), borderRadius: BorderRadius.circular(6)),
+                            child: Text(_getLevelText(word.level), style: TextStyle(color: themeColor, fontSize: 10, fontWeight: FontWeight.w900)),
+                          ),
+                          const SizedBox(width: 8),
+                        ],
                         Text(word.kanji, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: textColor)),
                         const SizedBox(width: 8),
                         Text('[${word.kana}]', style: TextStyle(fontSize: 13, color: subTextColor)),
