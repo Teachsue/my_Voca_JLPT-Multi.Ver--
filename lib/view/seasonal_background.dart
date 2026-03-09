@@ -16,10 +16,15 @@ class SeasonalBackground extends StatelessWidget {
     int month = DateTime.now().month;
     String target = appTheme;
     if (target == 'auto') {
-      if (month >= 3 && month <= 5) target = 'spring';
-      else if (month >= 6 && month <= 8) target = 'summer';
-      else if (month >= 9 && month <= 11) target = 'autumn';
-      else target = 'winter';
+      if (month >= 3 && month <= 5) {
+        target = 'spring';
+      } else if (month >= 6 && month <= 8) {
+        target = 'summer';
+      } else if (month >= 9 && month <= 11) {
+        target = 'autumn';
+      } else {
+        target = 'winter';
+      }
     }
 
     if (isDarkMode) {
@@ -85,7 +90,6 @@ class SeasonalBackground extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = _getSeasonalTheme();
     
-    // 배경을 포함한 컨테이너를 반환하여 각 페이지가 자신만의 배경을 갖게 함
     return Container(
       width: double.infinity,
       height: double.infinity,
@@ -96,15 +100,15 @@ class SeasonalBackground extends StatelessWidget {
           end: Alignment.bottomCenter,
         ),
       ),
+      // [수정] clipBehavior를 antiAlias로 설정하여 화면 밖 아이콘이 노란색 오버플로우 선을 유발하지 않도록 함
       child: Stack(
-        clipBehavior: Clip.none,
+        clipBehavior: Clip.antiAlias, 
         children: [
           Positioned(
             top: -30,
             right: -30,
             child: Icon(theme['icon'], size: 250, color: theme['iconColor']),
           ),
-          // 페이지 내용
           child,
         ],
       ),

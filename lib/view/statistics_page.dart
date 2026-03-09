@@ -59,12 +59,16 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
 
   Future<void> _calculateStats() async {
     if (_isCalculating) return;
-    setState(() => _isCalculating = true);
+    if (mounted) setState(() => _isCalculating = true);
+    
     final wBox = Hive.box<Word>(DatabaseService.boxName);
     if (wBox.isEmpty) {
-      setState(() { _progress = 0.0; _reviewWords = 0; _isCalculating = false; });
+      if (mounted) {
+        setState(() { _progress = 0.0; _reviewWords = 0; _isCalculating = false; });
+      }
       return;
     }
+    
     final Map<int, int> wordCorrectMap = {};
     int wrongCount = 0;
     for (var i = 0; i < wBox.length; i++) {
@@ -77,26 +81,36 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
       }
       if (i % 500 == 0) await Future.delayed(Duration.zero);
     }
+    
     final learnedCount = wordCorrectMap.values.where((c) => c > 0).length;
     if (mounted) {
-      setState(() { _progress = wordCorrectMap.isEmpty ? 0.0 : (learnedCount / wordCorrectMap.length) * 100; _reviewWords = wrongCount; _isCalculating = false; });
+      setState(() { 
+        _progress = wordCorrectMap.isEmpty ? 0.0 : (learnedCount / wordCorrectMap.length) * 100; 
+        _reviewWords = wrongCount; 
+        _isCalculating = false; 
+      });
     }
   }
 
   Future<void> _loadUserProfile() async {
     if (!mounted) return;
     setState(() => _isLoadingProfile = true);
+    
     if (SupabaseService.isGoogleLinked) await SupabaseService.refreshUser();
+    
     final profile = await SupabaseService.getUserProfile();
     if (profile != null && mounted) {
       setState(() {
         _nickname = profile['nickname'] ?? '냥냥이';
         _isLoadingProfile = false;
       });
+    } else if (mounted) {
+      setState(() => _isLoadingProfile = false);
     }
   }
 
   void _showSyncChoiceDialog() {
+    if (!mounted) return;
     final bool isDarkMode = Theme.of(context).brightness == Brightness.dark;
     final currentAuthId = Supabase.instance.client.auth.currentUser?.id;
 
@@ -127,14 +141,16 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
                 height: 52,
                 child: ElevatedButton(
                   onPressed: () async {
-                    Navigator.pop(context);
+                    Navigator.of(context).pop();
                     if (currentAuthId != null) {
                       await Hive.box(DatabaseService.sessionBoxName).put('last_synced_auth_id', currentAuthId);
                     }
                     await SupabaseService.uploadLocalDataToCloud(clearFirst: true);
                     SupabaseService.isMigrationComplete = true;
-                    _calculateStats();
-                    _loadUserProfile();
+                    if (mounted) {
+                      _calculateStats();
+                      _loadUserProfile();
+                    }
                   },
                   style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5B86E5), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), elevation: 0),
                   child: const Text('현재 기기 데이터 유지 (업로드)', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -146,14 +162,16 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
                 height: 52,
                 child: OutlinedButton(
                   onPressed: () async {
-                    Navigator.pop(context);
+                    Navigator.of(context).pop();
                     if (currentAuthId != null) {
                       await Hive.box(DatabaseService.sessionBoxName).put('last_synced_auth_id', currentAuthId);
                     }
                     SupabaseService.isMigrationComplete = true;
                     await SupabaseService.downloadProgressFromServer();
-                    _calculateStats();
-                    _loadUserProfile();
+                    if (mounted) {
+                      _calculateStats();
+                      _loadUserProfile();
+                    }
                   },
                   style: OutlinedButton.styleFrom(side: const BorderSide(color: Color(0xFF5B86E5), width: 1.5), foregroundColor: const Color(0xFF5B86E5), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
                   child: const Text('클라우드 데이터 가져오기 (다운로드)', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -321,22 +339,32 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
     return Column(
       children: [
         _buildManagementCard(context, title: SupabaseService.isAnonymous ? '구글 계정 연동하기' : '구글 연동 해제 (로그아웃)', subtitle: SupabaseService.isAnonymous ? '데이터를 클라우드에 보관' : '로그아웃해도 기기 데이터는 유지됩니다.', icon: Icons.account_circle_rounded, color: SupabaseService.isAnonymous ? const Color(0xFF5B86E5) : Colors.orange, isDarkMode: isDarkMode, onTap: () async {
-          if (SupabaseService.isAnonymous) await SupabaseService.signInWithGoogle();
-          else _showResetDialog(context, '로그아웃', '정말 로그아웃 하시겠습니까?', () async { 
-            await sBox.delete('last_synced_auth_id');
-            await SupabaseService.signOut(); 
-            SupabaseService.isMigrationComplete = false;
-            _calculateStats();
-            _loadUserProfile(); 
-          });
+          if (SupabaseService.isAnonymous) {
+            await SupabaseService.signInWithGoogle();
+            if (mounted) {
+              _loadUserProfile();
+              _calculateStats();
+            }
+          } else {
+            _showResetDialog(context, '로그아웃', '정말 로그아웃 하시겠습니까?', () async { 
+              await sBox.delete('last_synced_auth_id');
+              await SupabaseService.signOut(); 
+              SupabaseService.isMigrationComplete = false;
+              if (mounted) {
+                _calculateStats();
+                _loadUserProfile(); 
+              }
+            });
+          }
         }),
         const SizedBox(height: 12),
         _buildManagementCard(context, title: '실력 진단 초기화', subtitle: '추천 레벨 기록을 삭제합니다.', icon: Icons.refresh_rounded, color: Colors.orangeAccent, isDarkMode: isDarkMode, onTap: () => _showResetDialog(context, '실력 진단 초기화', '추천 레벨 기록을 삭제하시겠습니까?\n홈에서 다시 테스트를 진행할 수 있습니다.', () async {
           await SupabaseService.resetRecommendedLevel();
-          _loadUserProfile();
+          if (mounted) _loadUserProfile();
         })),
         const SizedBox(height: 12),
         _buildManagementCard(context, title: '모든 학습 기록 초기화', subtitle: '공장 초기화 (복구 불가)', icon: Icons.delete_forever_rounded, color: Colors.redAccent, isDarkMode: isDarkMode, onTap: () => _showResetDialog(context, '모든 학습 기록 초기화', '정말 모든 데이터를 삭제하시겠습니까?', () async {
+          if (!mounted) return;
           showDialog(context: context, barrierDismissible: false, builder: (context) => const Center(child: CircularProgressIndicator(color: Color(0xFF5B86E5))));
           try {
             await SupabaseService.clearAllProgress();
@@ -357,7 +385,7 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
             }
             await wBox.putAll(updates);
           } finally {
-            Navigator.pop(context);
+            if (context.mounted) Navigator.of(context).pop();
             if (mounted) {
               _calculateStats();
               _loadUserProfile();
@@ -390,7 +418,8 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
     }
   }
 
-  void _showResetDialog(BuildContext context, String title, String content, VoidCallback onConfirm) {
+  void _showResetDialog(BuildContext context, String title, String content, FutureOr<void> Function() onConfirm) {
+    if (!mounted) return;
     final bool isDarkMode = Theme.of(context).brightness == Brightness.dark;
     showDialog(
       context: context,
@@ -401,14 +430,25 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
         content: Text(content, style: const TextStyle(fontSize: 15)),
         actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: Text('취소', style: TextStyle(color: isDarkMode ? Colors.white60 : Colors.grey[600], fontWeight: FontWeight.bold))),
-          ElevatedButton(onPressed: () { onConfirm(); Navigator.pop(context); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('✅ $title 처리가 완료되었습니다.'), behavior: SnackBarBehavior.floating, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)))); }, style: ElevatedButton.styleFrom(backgroundColor: title.contains('삭제') || title.contains('초기화') ? Colors.redAccent : const Color(0xFF5B86E5), foregroundColor: Colors.white, elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))), child: const Text('확인', style: TextStyle(fontWeight: FontWeight.bold))),
+          TextButton(onPressed: () => Navigator.of(context).pop(), child: Text('취소', style: TextStyle(color: isDarkMode ? Colors.white60 : Colors.grey[600], fontWeight: FontWeight.bold))),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.of(context).pop();
+              await onConfirm();
+              if (mounted) {
+                ScaffoldMessenger.of(this.context).showSnackBar(SnackBar(content: Text('✅ $title 처리가 완료되었습니다.'), behavior: SnackBarBehavior.floating, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))));
+              }
+            }, 
+            style: ElevatedButton.styleFrom(backgroundColor: title.contains('삭제') || title.contains('초기화') ? Colors.redAccent : const Color(0xFF5B86E5), foregroundColor: Colors.white, elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))), 
+            child: const Text('확인', style: TextStyle(fontWeight: FontWeight.bold))
+          ),
         ],
       ),
     );
   }
 
   void _showEditNicknameDialog(bool isDarkMode, Color textColor) {
+    if (!mounted) return;
     final TextEditingController controller = TextEditingController(text: _nickname);
     showDialog(
       context: context,
@@ -424,12 +464,12 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
           style: TextStyle(color: textColor),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('취소')),
+          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('취소')),
           ElevatedButton(
             onPressed: () async {
               final newName = controller.text.trim();
               if (newName.isNotEmpty) {
-                Navigator.pop(context);
+                Navigator.of(context).pop();
                 FocusManager.instance.primaryFocus?.unfocus();
                 await Future.delayed(const Duration(milliseconds: 400));
                 await SupabaseService.updateNickname(newName);

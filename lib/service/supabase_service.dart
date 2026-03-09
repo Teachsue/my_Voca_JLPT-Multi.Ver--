@@ -272,19 +272,9 @@ class SupabaseService {
         });
       }
 
-      debugPrint("🧹 로컬 학습 기록 초기화 중...");
-      for (var word in wordBox.values) {
-        if (word.is_bookmarked || word.is_wrong_note || word.status != 'unlearned') {
-          word.is_bookmarked = false;
-          word.is_wrong_note = false;
-          word.status = 'unlearned';
-          word.correct_count = 0;
-          word.incorrect_count = 0;
-          word.srs_stage = 0;
-          word.next_review_at = null;
-          await word.save();
-        }
-      }
+      // [수정] 강제 로컬 초기화 루프를 제거했습니다.
+      // 서버 데이터를 내려받기 전에 로컬 데이터를 지우면 동기화되지 않은 데이터가 유실될 수 있습니다.
+      // 이제 서버 데이터가 존재하는 단어만 덮어쓰는 '병합 동기화' 방식으로 동작합니다.
 
       final List<dynamic> response = await _client.from('user_progress').select().eq('user_id', remoteSid);
       debugPrint("📥 서버에서 ${response.length}개의 최신 학습 기록 수신 완료.");
@@ -304,7 +294,7 @@ class SupabaseService {
           await word.save();
         }
       }
-      debugPrint("✅ 학습 데이터 동기화 완료! (UI 설정 유지)");
+      debugPrint("✅ 학습 데이터 병합 완료! (서버에 없는 로컬 데이터 보존)");
     });
   }
 

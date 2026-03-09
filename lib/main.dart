@@ -107,7 +107,7 @@ class SolidPageTurnTransitionsBuilder extends PageTransitionsBuilder {
         child: SeasonalBackground(
           isDarkMode: isDarkMode,
           appTheme: appTheme,
-          child: Material(color: Colors.transparent, child: child),
+          child: child,
         ),
       ),
     );
@@ -137,6 +137,8 @@ class MyApp extends StatelessWidget {
               seedColor: const Color(0xFF5B86E5),
               brightness: isDarkMode ? Brightness.dark : Brightness.light,
             ),
+            focusColor: Colors.transparent, // 포커스 테두리 방지
+            highlightColor: Colors.transparent, // 하이라이트 노란 선 방지
             textTheme:
                 GoogleFonts.notoSansTextTheme(
                   isDarkMode

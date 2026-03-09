@@ -46,7 +46,11 @@ class _WrongAnswerPageState extends State<WrongAnswerPage> {
         elevation: 0,
         centerTitle: true,
         actions: [
-          IconButton(icon: const Icon(Icons.delete_sweep_rounded), onPressed: () => _showResetDialog(context, isDarkMode)),
+          IconButton(
+            icon: const Icon(Icons.delete_outline_rounded), 
+            onPressed: () => _showResetDialog(context, isDarkMode),
+            tooltip: '전체 삭제',
+          ),
         ],
       ),
       body: SafeArea(
@@ -98,11 +102,13 @@ class _WrongAnswerPageState extends State<WrongAnswerPage> {
                                       child: Text('틀림 ${word.incorrect_count}', style: TextStyle(color: Colors.redAccent, fontSize: 10, fontWeight: FontWeight.bold)),
                                     ),
                                     IconButton(
-                                      icon: const Icon(Icons.close_rounded, size: 20),
+                                      icon: const Icon(Icons.close_rounded, size: 20, color: Colors.grey),
                                       onPressed: () async {
                                         word.is_wrong_note = false;
                                         await word.save();
-                                        await SupabaseService.upsertWordProgress(word);
+                                        if (SupabaseService.isGoogleLinked) {
+                                          await SupabaseService.upsertWordProgress(word);
+                                        }
                                       },
                                     ),
                                   ],
@@ -144,5 +150,45 @@ class _WrongAnswerPageState extends State<WrongAnswerPage> {
     );
   }
 
-  void _showResetDialog(BuildContext context, bool isDarkMode) { /* 생략 */ }
+  void _showResetDialog(BuildContext context, bool isDarkMode) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: isDarkMode ? const Color(0xFF2D3436) : Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('오답노트 초기화', style: TextStyle(fontWeight: FontWeight.bold)),
+        content: const Text('모든 오답 기록을 삭제하시겠습니까?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('취소', style: TextStyle(color: Colors.grey))),
+          TextButton(
+            onPressed: () async {
+              // 1. 다이얼로그를 먼저 닫음
+              Navigator.pop(context);
+              
+              final box = Hive.box<Word>(DatabaseService.boxName);
+              final wrongWords = box.values.where((w) => w.is_wrong_note).toList();
+              
+              for (var word in wrongWords) {
+                word.is_wrong_note = false;
+                await word.save();
+              }
+              
+              if (SupabaseService.isGoogleLinked) {
+                await SupabaseService.resetWrongAnswers();
+                await SupabaseService.uploadLocalDataToCloud(); // 변경사항 전파
+              }
+              
+              // 2. 비동기 작업 완료 후 위젯이 여전히 트리 내에 있는지 확인
+              if (!mounted) return;
+              
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('🗑️ 오답노트가 초기화되었습니다.')),
+              );
+            },
+            child: const Text('전체 삭제', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
 }
