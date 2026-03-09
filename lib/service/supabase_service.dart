@@ -54,16 +54,45 @@ class SupabaseService {
         await _client.auth.signInWithOAuth(OAuthProvider.google, redirectTo: dotenv.get('REDIRECT_URL'));
         return;
       }
-      final GoogleSignIn googleSignIn = GoogleSignIn(serverClientId: dotenv.get('GOOGLE_WEB_CLIENT_ID'));
+
+      debugPrint("🚀 네이티브 구글 로그인 시도 중...");
+      final GoogleSignIn googleSignIn = GoogleSignIn(
+        serverClientId: dotenv.get('GOOGLE_WEB_CLIENT_ID'),
+      );
+      
       final googleUser = await googleSignIn.signIn();
-      if (googleUser == null) return;
+      if (googleUser == null) {
+        debugPrint("⚠️ 사용자가 로그인을 취소했습니다.");
+        return;
+      }
+
+      debugPrint("📧 계정 선택 완료: ${googleUser.email}");
       final googleAuth = await googleUser.authentication;
       final idToken = googleAuth.idToken;
       final accessToken = googleAuth.accessToken;
-      if (idToken == null) throw 'Google ID Token is null';
-      await _client.auth.signInWithIdToken(provider: OAuthProvider.google, idToken: idToken, accessToken: accessToken);
+
+      if (idToken == null) throw 'Google ID Token을 가져오지 못했습니다.';
+
+      debugPrint("🔗 Supabase 인증 시도 중 (ID Token)...");
+      await _client.auth.signInWithIdToken(
+        provider: OAuthProvider.google,
+        idToken: idToken,
+        accessToken: accessToken,
+      );
+      debugPrint("✅ 네이티브 로그인 성공!");
     } catch (e) {
-      debugPrint("❌ 구글 로그인 에러: $e");
+      debugPrint("❌ 네이티브 로그인 실패: $e");
+      debugPrint("🔄 브라우저 기반 OAuth 방식으로 폴백을 시도합니다...");
+      
+      try {
+        await _client.auth.signInWithOAuth(
+          OAuthProvider.google,
+          redirectTo: dotenv.get('REDIRECT_URL'),
+          authScreenLaunchMode: LaunchMode.inAppBrowserView,
+        );
+      } catch (fallbackError) {
+        debugPrint("❌ 최종 로그인 실패: $fallbackError");
+      }
     }
   }
 
