@@ -5,6 +5,7 @@ import '../model/word.dart';
 import 'database_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
 class SupabaseService {
   static final SupabaseClient _client = Supabase.instance.client;
@@ -31,23 +32,78 @@ class SupabaseService {
     return newSid;
   }
 
+  /// 구글 네이티브 로그인 (idToken 방식)
+  /// 이 방식은 브라우저를 열지 않고 안드로이드 시스템의 계정 선택창을 사용하여
+  /// 로그인 완료 후 브라우저 창이 남는 현상을 방지합니다.
   static Future<void> signInWithGoogle() async {
     try {
-      final redirectUrl = dotenv.get('REDIRECT_URL');
-      await _client.auth.signInWithOAuth(
-        OAuthProvider.google,
-        redirectTo: kIsWeb ? null : redirectUrl,
-        // inAppBrowserView 모드는 로그인이 완료되면 자동으로 창을 닫고 앱으로 복귀하는 데 가장 효과적입니다.
-        authScreenLaunchMode: LaunchMode.inAppBrowserView,
+      if (kIsWeb) {
+        // 웹 환경에서는 기존 OAuth 방식을 유지하거나 별도 처리가 필요할 수 있습니다.
+        await _client.auth.signInWithOAuth(
+          OAuthProvider.google,
+          redirectTo: dotenv.get('REDIRECT_URL'),
+        );
+        return;
+      }
+
+      // 1. 네이티브 구글 로그인 시도
+      final GoogleSignIn googleSignIn = GoogleSignIn(
+        serverClientId: dotenv.get('GOOGLE_WEB_CLIENT_ID'),
       );
+      
+      final googleUser = await googleSignIn.signIn();
+      if (googleUser == null) {
+        debugPrint("⚠️ 구글 로그인 취소됨");
+        return;
+      }
+
+      final googleAuth = await googleUser.authentication;
+      final accessToken = googleAuth.accessToken;
+      final idToken = googleAuth.idToken;
+
+      if (idToken == null) {
+        throw 'Google Sign In failed: ID Token is null';
+      }
+
+      // 2. Supabase에 ID 토큰을 전달하여 인증 완료
+      await _client.auth.signInWithIdToken(
+        provider: OAuthProvider.google,
+        idToken: idToken,
+        accessToken: accessToken,
+      );
+      
+      debugPrint("✅ 네이티브 구글 로그인 성공: ${googleUser.email}");
     } catch (e) {
       debugPrint("❌ 구글 로그인 에러 발생: $e");
+      
+      // 네이티브 로그인 실패 시 기존 브라우저 방식(OAuth)으로 폴백 시도
+      try {
+        debugPrint("🔄 브라우저 기반 OAuth 방식으로 재시도합니다...");
+        await _client.auth.signInWithOAuth(
+          OAuthProvider.google,
+          redirectTo: kIsWeb ? null : dotenv.get('REDIRECT_URL'),
+          authScreenLaunchMode: LaunchMode.inAppBrowserView,
+        );
+      } catch (fallbackError) {
+        debugPrint("❌ 최종 로그인 실패: $fallbackError");
+      }
     }
   }
 
   static Future<void> signOut() async {
     _isAdmin = false;
     _isMigrationComplete = false;
+    
+    // 네이티브 구글 로그인도 로그아웃 처리
+    try {
+      final GoogleSignIn googleSignIn = GoogleSignIn();
+      if (await googleSignIn.isSignedIn()) {
+        await googleSignIn.signOut();
+      }
+    } catch (e) {
+      debugPrint("⚠️ 구글 계정 로그아웃 중 에러: $e");
+    }
+
     await _client.auth.signOut();
     debugPrint("🚪 로그아웃 완료 (인증 세션 종료)");
   }

@@ -27,21 +27,29 @@ class _DaySelectionPageState extends State<DaySelectionPage> {
   }
 
   void _calculateDayChunks() {
-    final int levelInt = int.parse(widget.level.replaceAll(RegExp(r'[^0-9]'), ''));
+    final String levelStr = widget.level.replaceAll(RegExp(r'[^0-9]'), '');
+    final int levelInt = int.tryParse(levelStr) ?? 5; // 기본값 N5
     final List<Word> allWords = DatabaseService.getWordsByLevel(levelInt);
     if (allWords.isEmpty) return;
     
-    // 1. 먼저 ID 순으로 정렬하여 베이스 순서를 고정
+    // 1. ID 순으로 정렬 후 고정 시드(42)로 셔플하여 순서 고정 (메인 페이지 로직과 일치)
+    // 비슷한 발음의 단어가 모이는 것을 방지하기 위해 섞어서 보여줌
     allWords.sort((a, b) => a.id.compareTo(b.id)); 
-    // 2. 고정된 시드(42)를 사용하여 결정론적 셔플 (항상 동일한 랜덤 순서 생성)
     allWords.shuffle(Random(42)); 
     
+    // 2. 모든 레벨 Day당 20개씩 단어 묶기
     final List<List<Word>> chunks = [];
-    for (int i = 0; i < allWords.length; i += 20) {
-      int end = (i + 20 < allWords.length) ? i + 20 : allWords.length;
+    const int chunkSize = 20;
+    for (int i = 0; i < allWords.length; i += chunkSize) {
+      int end = (i + chunkSize < allWords.length) ? i + chunkSize : allWords.length;
       List<Word> chunk = allWords.sublist(i, end);
-      if (chunks.isNotEmpty && chunk.length < 10) chunks.last.addAll(chunk);
-      else chunks.add(chunk);
+      
+      // 마지막 묶음이 10개 미만이면 이전 묶음에 합침 (단, 이전 묶음이 존재할 때만)
+      if (chunks.isNotEmpty && chunk.length < 10) {
+        chunks.last.addAll(chunk);
+      } else {
+        chunks.add(chunk);
+      }
     }
     _allDayChunks = chunks;
   }
@@ -109,7 +117,7 @@ class _DaySelectionPageState extends State<DaySelectionPage> {
           return ValueListenableBuilder(
             valueListenable: Hive.box<Word>(DatabaseService.boxName).listenable(),
             builder: (context, Box<Word> box, _) {
-              if (_allDayChunks.isEmpty) return Center(child: CircularProgressIndicator(color: Color(0xFF5B86E5)));
+              if (_allDayChunks.isEmpty) return Center(child: CircularProgressIndicator(color: const Color(0xFF5B86E5)));
               final filteredDays = _searchQuery.isEmpty ? List.generate(_allDayChunks.length, (i) => i) : List.generate(_allDayChunks.length, (i) => i).where((index) => (index + 1).toString().contains(_searchQuery)).toList();
               if (filteredDays.isEmpty) return Center(child: Text('검색 결과가 없습니다.', style: TextStyle(color: textColor)));
 

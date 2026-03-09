@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../model/word.dart';
@@ -24,15 +25,30 @@ class StudyViewModel extends ChangeNotifier {
   Word? get currentWord => sessionWords.isNotEmpty ? sessionWords[currentIndex] : null;
   int get total => sessionWords.length;
 
+  int getChunkSize(int level) {
+    // 모든 레벨(N5~N1, 기초 등)에서 Day당 20개씩 학습하도록 설정
+    return 20;
+  }
+
   Future<void> loadWords(int level, {int questionCount = 10, int? day, List<Word>? initialWords}) async {
     if (initialWords != null) {
       sessionWords = List.from(initialWords)..shuffle();
     } else {
+      // 1. 해당 레벨의 모든 단어 불러오기
       final List<Word> words = _wordBox.values.where((w) => w.level == level).toList();
+      
+      // 2. ID 기준으로 정렬 후 고정 시드(42)로 셔플하여 항상 동일한 학습 순서 보장
+      // (비슷한 발음이 모이는 것을 방지하기 위해 섞음)
+      words.sort((a, b) => a.id.compareTo(b.id));
+      words.shuffle(Random(42));
+
       if (day != null && day > 0) {
-        int start = (day - 1) * questionCount;
-        sessionWords = words.skip(start).take(questionCount).toList();
+        // 3. 레벨별 적절한 Day당 단어 개수(20개) 가져오기
+        int chunkSize = getChunkSize(level);
+        int start = (day - 1) * chunkSize;
+        sessionWords = words.skip(start).take(chunkSize).toList();
       } else {
+        // 랜덤 학습 모드
         sessionWords = words..shuffle();
         sessionWords = sessionWords.take(questionCount).toList();
       }
@@ -132,14 +148,12 @@ class StudyViewModel extends ChangeNotifier {
     }
 
     await word.save();
-    // [최적화] 여기서 실시간 서버 통신(upsertWordProgress, updateStudyLog)을 제거했습니다.
   }
 
   /// [신규] 퀴즈 종료 시 로컬의 모든 변경사항을 서버에 한 번만 전송합니다.
   Future<void> syncProgressToServer() async {
     if (SupabaseService.isGoogleLinked) {
       await SupabaseService.uploadLocalDataToCloud();
-      // 오늘 공부한 통계 기록 (단순화하여 전체 맞춘 개수를 점수로 전송)
       await SupabaseService.updateStudyLog(
         learnedCount: sessionWords.where((w) => w.correct_count == 1).length,
         reviewCount: sessionWords.where((w) => w.correct_count > 1).length,
@@ -172,7 +186,7 @@ class StudyViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// [신규] 특정 레벨의 모든 단어를 가져와서 10개씩 묶어 반환합니다. (이어서 학습하기 기능용)
+  /// [신규] 특정 레벨의 모든 단어를 가져와서 레벨별 정해진 개수(20개)씩 묶어 반환합니다.
   Future<List<List<Word>>> loadLevelWords(String level) async {
     int levelInt = 5;
     if (level == 'N5') levelInt = 5;
@@ -183,14 +197,29 @@ class StudyViewModel extends ChangeNotifier {
     else if (level == '히라가나') levelInt = 11;
     else if (level == '가타카나') levelInt = 12;
 
-    final List<Word> words = _wordBox.values
-        .where((w) => w.level == levelInt)
-        .toList();
+    // 1. 해당 레벨의 모든 단어 불러오기
+    final List<Word> words = _wordBox.values.where((w) => w.level == levelInt).toList();
+    
+    // 2. ID 기준으로 정렬 후 고정 시드(42)로 셔플하여 항상 동일한 순서 유지
+    // (이어하기와 단어장 메뉴의 순서를 일치시키기 위함)
+    words.sort((a, b) => a.id.compareTo(b.id));
+    words.shuffle(Random(42));
 
-    // 10개씩 묶기
+    // 3. 모든 레벨 Day당 20개 적용
+    int chunkSize = getChunkSize(levelInt);
+
+    // 4. 단어 묶기(Chunking)
     List<List<Word>> chunks = [];
-    for (var i = 0; i < words.length; i += 10) {
-      chunks.add(words.sublist(i, i + 10 > words.length ? words.length : i + 10));
+    for (var i = 0; i < words.length; i += chunkSize) {
+      int end = (i + chunkSize > words.length) ? words.length : i + chunkSize;
+      List<Word> chunk = words.sublist(i, end);
+      
+      // 마지막 묶음이 10개 미만이면 이전 묶음에 합침 (단, 이전 묶음이 존재할 때만)
+      if (chunks.isNotEmpty && chunk.length < 10) {
+        chunks.last.addAll(chunk);
+      } else {
+        chunks.add(chunk);
+      }
     }
     return chunks;
   }
