@@ -120,7 +120,7 @@ class LevelSummaryPage extends StatelessWidget {
       child: SizedBox(
         width: double.infinity,
         child: OutlinedButton(
-          onPressed: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (context) => QuizPage(level: level, questionCount: count))); },
+          onPressed: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (context) => QuizPage(level: level, questionCount: count, day: -1))); },
           style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), side: BorderSide(color: isDarkMode ? Colors.white10 : themeColor.withOpacity(0.3), width: 1.5), foregroundColor: isDarkMode ? Colors.white : themeColor),
           child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.bolt_rounded, size: 18, color: isDarkMode ? Colors.white38 : themeColor), const SizedBox(width: 8), Text('$count문제 도전하기', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16))]),
         ),

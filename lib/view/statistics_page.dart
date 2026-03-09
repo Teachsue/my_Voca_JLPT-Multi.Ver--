@@ -370,6 +370,16 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
             await SupabaseService.clearAllProgress();
             await sBox.delete('recommended_level');
             await sBox.delete('last_synced_auth_id'); 
+            
+            // 오늘의 단어 고정 데이터 및 캘린더 도장 기록 전체 삭제
+            final allKeys = sBox.keys.toList();
+            for (var key in allKeys) {
+              final String keyStr = key.toString();
+              if (keyStr.startsWith('todays_words_') || keyStr.startsWith('level_test_session')) {
+                await sBox.delete(key);
+              }
+            }
+            
             for (int i = 1; i <= 12; i++) { await sBox.delete('level_${i}_loaded'); }
             final wBox = Hive.box<Word>(DatabaseService.boxName);
             final Map<String, Word> updates = {};

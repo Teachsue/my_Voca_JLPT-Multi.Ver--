@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'dart:convert';
 import 'package:intl/intl.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:provider/provider.dart';
 import '../view_model/study_view_model.dart';
 import '../service/database_service.dart';
 import '../service/supabase_service.dart';
@@ -311,32 +312,31 @@ class _HomePageState extends State<HomePage> {
                           ],
                         ),
                         const SizedBox(height: 20),
-                        ValueListenableBuilder(
-                          valueListenable: Hive.box(DatabaseService.sessionBoxName)
-                              .listenable(keys: [isCompletedKey]),
-                          builder: (context, box, child) {
-                            final bool isCompleted =
-                                box.get(isCompletedKey, defaultValue: false);
-                            return GestureDetector(
-                              onTap: () async {
-                                final viewModel = StudyViewModel();
-                                final List<Word> todaysWords =
-                                    await viewModel.loadTodaysWords();
-                                if (context.mounted) {
-                                  await Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) => WordListPage(
-                                          level: isCompleted
-                                              ? '오늘의 단어 복습'
-                                              : '오늘의 단어',
-                                          initialDayIndex: 0,
-                                          allDayChunks: [todaysWords]),
-                                    ),
-                                  );
-                                  _refresh();
-                                }
-                              },
+                          ValueListenableBuilder(
+                            valueListenable: Hive.box(DatabaseService.sessionBoxName).listenable(keys: [isCompletedKey]),
+                            builder: (context, box, child) {
+                              final bool isCompleted = box.get(isCompletedKey, defaultValue: false);
+                              return GestureDetector(
+                                onTap: () async {
+                                  // [복구] 전역 Provider를 통해 오늘의 단어 로드
+                                  final viewModel = context.read<StudyViewModel>();
+                                  final List<Word> todaysWords = await viewModel.loadTodaysWords();
+                                  
+                                  if (context.mounted) {
+                                    // 학습 리스트 페이지로 이동 (이미 고정된 10개 단어가 전달됨)
+                                    await Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) => WordListPage(
+                                          level: isCompleted ? '오늘의 단어 복습' : '오늘의 단어', 
+                                          initialDayIndex: 0, 
+                                          allDayChunks: [todaysWords]
+                                        ),
+                                      ),
+                                    );
+                                    _refresh();
+                                  }
+                                },
                               child: Container(
                                 width: double.infinity,
                                 padding: const EdgeInsets.symmetric(

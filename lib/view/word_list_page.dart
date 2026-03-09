@@ -25,34 +25,28 @@ class WordListPage extends StatefulWidget {
 class _WordListPageState extends State<WordListPage> {
   late PageController _pageController;
   late int _currentDayIndex;
-  late bool _isTodaysWords;
 
   @override
   void initState() {
     super.initState();
     _currentDayIndex = widget.initialDayIndex;
     _pageController = PageController(initialPage: widget.initialDayIndex);
-    _isTodaysWords = widget.level == '오늘의 단어' || widget.level == '오늘의 단어 복습';
+    _saveStudyPath();
+  }
 
-    if (!_isTodaysWords) {
-      final sessionBox = Hive.box(DatabaseService.sessionBoxName);
-      sessionBox.put('last_day_${widget.level}', _currentDayIndex + 1);
-      // 마지막 학습 경로 저장
+  void _saveStudyPath() {
+    final sessionBox = Hive.box(DatabaseService.sessionBoxName);
+    sessionBox.put('last_study_path', {
+      'level': widget.level,
+      'day_index': _currentDayIndex,
+      'updated_at': DateTime.now().toIso8601String(),
+    });
+    if (SupabaseService.isGoogleLinked) {
       SupabaseService.updateLastStudyPath(widget.level, _currentDayIndex);
     }
   }
 
-  @override
-  void dispose() {
-    _pageController.dispose();
-    super.dispose();
-  }
-
-  // 계절 및 모드에 따른 강조 색상을 가져오는 함수
-  Color _getThemeColor(bool isDarkMode) {
-    final sessionBox = Hive.box(DatabaseService.sessionBoxName);
-    final String appTheme = sessionBox.get('app_theme', defaultValue: 'auto');
-    if (isDarkMode) return const Color(0xFF5B86E5);
+  Color _getThemePointColor(bool isDarkMode, String appTheme) {
     int month = DateTime.now().month;
     String target = appTheme;
     if (target == 'auto') {
@@ -61,173 +55,135 @@ class _WordListPageState extends State<WordListPage> {
       else if (month >= 9 && month <= 11) target = 'autumn';
       else target = 'winter';
     }
-    switch (target) {
-      case 'spring': return const Color(0xFFF08080);
-      case 'summer': return const Color(0xFF1976D2);
-      case 'autumn': return const Color(0xFFE64A19);
-      case 'winter':
-      default: return const Color(0xFF455A64);
+    if (isDarkMode) {
+      switch (target) {
+        case 'spring': return const Color(0xFFCE93D8);
+        case 'summer': return const Color(0xFF90CAF9);
+        case 'autumn': return const Color(0xFFFFCC80);
+        default: return const Color(0xFFB0BEC5);
+      }
     }
+    switch (target) {
+      case 'spring': return Colors.pinkAccent;
+      case 'summer': return Colors.blueAccent;
+      case 'autumn': return Colors.orangeAccent;
+      default: return Colors.blueGrey;
+    }
+  }
+
+  String _getLevelText(int level) {
+    if (level <= 5) return 'N$level';
+    if (level == 11) return '기초1';
+    if (level == 12) return '기초2';
+    return '-';
   }
 
   @override
   Widget build(BuildContext context) {
-    final todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
-    final bool isCompleted = _isTodaysWords && 
-        Hive.box(DatabaseService.sessionBoxName).get('todays_words_completed_$todayStr', defaultValue: false);
     final bool isDarkMode = Theme.of(context).brightness == Brightness.dark;
-    final Color textColor = isDarkMode ? Colors.white : Colors.black87;
-    final Color themeColor = _getThemeColor(isDarkMode);
+    final sessionBox = Hive.box(DatabaseService.sessionBoxName);
+    final String appTheme = sessionBox.get('app_theme', defaultValue: 'auto');
+    final Color themeColor = _getThemePointColor(isDarkMode, appTheme);
+    final Color textColor = isDarkMode ? const Color(0xFFE0E0E0) : Colors.black87;
+
+    bool isTodaysMode = widget.level.contains('오늘');
 
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: AppBar(
+        // [수정] 오늘의 단어 모드일 때는 - DAY X 표시를 숨김
         title: Text(
-          _isTodaysWords 
-              ? (isCompleted ? '오늘의 단어 복습' : '오늘의 단어') 
-              : '${widget.level} DAY ${_currentDayIndex + 1}', 
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: textColor)
+          isTodaysMode ? widget.level : '${widget.level} - DAY ${_currentDayIndex + 1}',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: textColor),
         ),
         backgroundColor: Colors.transparent,
         foregroundColor: textColor,
         elevation: 0,
         centerTitle: true,
-        actions: [
-          IconButton(
-            icon: Icon(Icons.home_rounded, size: 22, color: textColor),
-            onPressed: () => Navigator.popUntil(context, (route) => route.isFirst),
-          ),
-        ],
       ),
       body: PageView.builder(
         controller: _pageController,
-        onPageChanged: (index) {
-          setState(() { _currentDayIndex = index; });
-          if (!_isTodaysWords) {
-            Hive.box(DatabaseService.sessionBoxName).put('last_day_${widget.level}', index + 1);
-            // 페이지를 넘길 때마다 마지막 학습 경로 업데이트
-            SupabaseService.updateLastStudyPath(widget.level, index);
-          }
-        },
         itemCount: widget.allDayChunks.length,
-        itemBuilder: (context, chunkIndex) {
-          final List<Word> currentWords = widget.allDayChunks[chunkIndex];
-          return ListView.builder(
-            padding: const EdgeInsets.fromLTRB(24, 10, 24, 24),
-            itemCount: currentWords.length + (isCompleted ? 1 : 0),
-            itemBuilder: (context, index) {
-              if (isCompleted && index == 0) return Padding(padding: const EdgeInsets.only(bottom: 20), child: _buildReviewBanner(isDarkMode));
-              final wordIndex = isCompleted ? index - 1 : index;
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: _buildWordCard(currentWords[wordIndex], wordIndex, isCompleted, isDarkMode, themeColor),
-              );
-            },
-          );
+        onPageChanged: (index) {
+          setState(() {
+            _currentDayIndex = index;
+          });
+          _saveStudyPath();
+        },
+        itemBuilder: (context, index) {
+          final words = widget.allDayChunks[index];
+          return _buildWordList(words, isDarkMode, textColor, themeColor);
         },
       ),
-      bottomNavigationBar: _buildBottomButton(isCompleted, isDarkMode, themeColor),
+      bottomNavigationBar: _buildBottomActionBar(context, isDarkMode, themeColor),
     );
   }
 
-  Widget _buildReviewBanner(bool isDarkMode) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: isDarkMode ? Colors.lightGreen.withOpacity(0.1) : Colors.lightGreen.shade50,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.lightGreen.withOpacity(0.3)),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.check_circle_outline_rounded, color: Colors.lightGreen.shade400),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              '학습 완료! 복습 시간입니다.',
-              style: TextStyle(fontSize: 14, color: isDarkMode ? Colors.white70 : Colors.black87, fontWeight: FontWeight.w500),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget _buildWordList(List<Word> words, bool isDarkMode, Color textColor, Color themeColor) {
+    return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, 100),
+      itemCount: words.length,
+      separatorBuilder: (context, index) => const SizedBox(height: 12),
+      itemBuilder: (context, index) {
+        final word = words[index];
+        final Color subTextColor = isDarkMode ? Colors.white38 : Colors.grey[600]!;
 
-  Widget _buildWordCard(Word word, int index, bool isCompleted, bool isDarkMode, Color themeColor) {
-    final Color textColor = isDarkMode ? Colors.white : Colors.black87;
-    final Color subTextColor = isDarkMode ? Colors.white60 : Colors.grey[600]!;
-
-    return StatefulBuilder(
-      builder: (context, setStateItem) {
         return Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: isDarkMode ? Colors.white.withOpacity(0.1) : Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: isDarkMode ? [] : [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 8)],
+            color: isDarkMode ? const Color(0xFF252525) : Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: isDarkMode ? [] : [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 4))],
+            border: isDarkMode ? Border.all(color: Colors.white.withOpacity(0.03)) : null,
           ),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // [복구] 순번 표시
               Container(
-                width: 32, height: 32,
+                width: 22, height: 22,
                 alignment: Alignment.center,
-                decoration: BoxDecoration(color: isDarkMode ? Colors.white10 : Colors.grey[100], shape: BoxShape.circle),
-                child: Text('${index + 1}', style: TextStyle(color: subTextColor, fontSize: 12, fontWeight: FontWeight.bold)),
+                decoration: BoxDecoration(color: themeColor.withOpacity(0.1), shape: BoxShape.circle),
+                child: Text('${index + 1}', style: TextStyle(color: themeColor.withOpacity(0.7), fontSize: 11, fontWeight: FontWeight.bold)),
               ),
-              const SizedBox(width: 16),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Wrap(
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      spacing: 8,
-                      runSpacing: 4,
+                    Row(
                       children: [
-                        Text(
-                          word.kanji,
-                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: textColor),
+                        // [복구] 난이도 등급 배지
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(color: themeColor.withOpacity(0.15), borderRadius: BorderRadius.circular(6)),
+                          child: Text(_getLevelText(word.level), style: TextStyle(color: themeColor, fontSize: 10, fontWeight: FontWeight.w900)),
                         ),
-                        Text(
-                          word.kana,
-                          style: TextStyle(fontSize: 13, color: isDarkMode ? Colors.white38 : Colors.grey[400]),
-                        ),
+                        const SizedBox(width: 8),
+                        Text(word.kanji, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: textColor)),
+                        const SizedBox(width: 8),
+                        Text('[${word.kana}]', style: TextStyle(fontSize: 13, color: subTextColor)),
                       ],
                     ),
+                    const SizedBox(height: 6),
+                    Text('발음: ${word.koreanPronunciation}', style: TextStyle(fontSize: 13, color: themeColor.withOpacity(0.8), fontWeight: FontWeight.w500)),
                     const SizedBox(height: 4),
-                    Text(
-                      '[ ${word.koreanPronunciation} ]',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: isDarkMode ? const Color(0xFF5B86E5).withOpacity(0.7) : const Color(0xFF5B86E5).withOpacity(0.6),
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      word.meaning,
-                      style: TextStyle(fontSize: 15, color: isDarkMode ? Colors.white70 : Colors.grey[700]),
-                    ),
+                    Text(word.meaning, style: TextStyle(fontSize: 15, color: isDarkMode ? Colors.white70 : Colors.grey[800])),
                   ],
                 ),
               ),
               IconButton(
                 icon: Icon(
-                    word.is_bookmarked
-                        ? Icons.star_rounded
-                        : Icons.star_border_rounded,
-                    color: word.is_bookmarked
-                        ? Colors.amber
-                        : (isDarkMode ? Colors.white24 : Colors.grey[300])),
-                onPressed: () {
-                  setStateItem(() {
+                  word.is_bookmarked ? Icons.star_rounded : Icons.star_outline_rounded,
+                  color: word.is_bookmarked ? Colors.amber : Colors.grey[400],
+                ),
+                onPressed: () async {
+                  setState(() {
                     word.is_bookmarked = !word.is_bookmarked;
-                    word.save();
                   });
-                  
-                  // [최적화] await를 빼서 랙을 없애고, 백그라운드에서 조용히 서버로 전송합니다.
+                  await word.save();
                   if (SupabaseService.isGoogleLinked) {
-                    SupabaseService.upsertWordProgress(word);
+                    await SupabaseService.upsertWordProgress(word);
                   }
                 },
               ),
@@ -238,27 +194,66 @@ class _WordListPageState extends State<WordListPage> {
     );
   }
 
-  Widget _buildBottomButton(bool isCompleted, bool isDarkMode, Color themeColor) {
-    final currentWords = widget.allDayChunks[_currentDayIndex];
-    return Container(
-      padding: EdgeInsets.fromLTRB(24, 12, 24, MediaQuery.of(context).padding.bottom + 15),
-      child: SizedBox(
-        width: double.infinity, height: 56,
-        child: ElevatedButton.icon(
-          onPressed: () {
-            if (isCompleted) Navigator.popUntil(context, (route) => route.isFirst);
-            else Navigator.push(context, MaterialPageRoute(builder: (context) => QuizPage(level: widget.level, questionCount: currentWords.length, day: _isTodaysWords ? 0 : _currentDayIndex + 1, initialWords: currentWords)));
-          },
-          icon: Icon(isCompleted ? Icons.check_circle_rounded : Icons.quiz_rounded),
-          label: Text(isCompleted ? '복습 완료! ✅' : '퀴즈 풀기', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: isCompleted ? Colors.lightGreen : themeColor, // 테마 색상 적용
-            foregroundColor: Colors.white,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            elevation: isDarkMode ? 0 : 4,
+  Widget _buildBottomActionBar(BuildContext context, bool isDarkMode, Color themeColor) {
+    final todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
+    final isCompletedKey = 'todays_words_completed_$todayStr';
+    final sessionBox = Hive.box(DatabaseService.sessionBoxName);
+    
+    return ValueListenableBuilder(
+      valueListenable: sessionBox.listenable(keys: [isCompletedKey]),
+      builder: (context, box, _) {
+        final bool isCompleted = box.get(isCompletedKey, defaultValue: false);
+        bool isTodaysMode = widget.level.contains('오늘');
+
+        return Container(
+          padding: const EdgeInsets.fromLTRB(20, 10, 20, 30),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter, end: Alignment.bottomCenter,
+              colors: [Colors.transparent, isDarkMode ? Colors.black.withOpacity(0.2) : Colors.white.withOpacity(0.8)],
+            ),
           ),
-        ),
-      ),
+          child: SizedBox(
+            width: double.infinity,
+            height: 60,
+            child: ElevatedButton.icon(
+              onPressed: () async {
+                // [수정] 오늘의 학습 완료 상태면 메인으로 복귀
+                if (isTodaysMode && isCompleted) {
+                  Navigator.of(context).popUntil((route) => route.isFirst);
+                  return;
+                }
+
+                if (mounted) {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => QuizPage(
+                        level: widget.level,
+                        questionCount: widget.allDayChunks[_currentDayIndex].length,
+                        day: isTodaysMode ? 0 : _currentDayIndex + 1,
+                        initialWords: widget.allDayChunks[_currentDayIndex],
+                      ),
+                    ),
+                  );
+                }
+              },
+              icon: Icon(isTodaysMode && isCompleted ? Icons.check_circle_rounded : Icons.play_arrow_rounded, size: 24),
+              label: Text(
+                isTodaysMode && isCompleted ? '오늘의 복습 완료!' : '테스트 시작하기!',
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: themeColor,
+                foregroundColor: isDarkMode ? Colors.black87 : Colors.white,
+                elevation: 8,
+                shadowColor: themeColor.withOpacity(0.4),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              ),
+            ),
+          ),
+        );
+      }
     );
   }
 }

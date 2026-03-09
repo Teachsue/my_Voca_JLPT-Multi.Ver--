@@ -346,7 +346,7 @@ class _AlphabetPageState extends State<AlphabetPage> {
         builder: (context) => QuizPage(
           level: quizTitle,
           questionCount: count ?? quizWords.length,
-          day: null,
+          day: -1,
           initialWords: quizWords.toList()..shuffle(),
         ),
       ),

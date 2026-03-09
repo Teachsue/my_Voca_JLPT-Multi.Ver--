@@ -4,10 +4,12 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:provider/provider.dart';
 import 'view/home_page.dart';
 import 'service/database_service.dart';
 import 'service/supabase_service.dart';
 import 'view/seasonal_background.dart';
+import 'view_model/study_view_model.dart';
 
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
@@ -18,7 +20,7 @@ void main() async {
     // .env 파일 로드
     await dotenv.load(fileName: ".env");
     
-    // Supabase 초기화 (기본 연결만 설정, 네트워크 요청 없음)
+    // Supabase 초기화
     await Supabase.initialize(
       url: dotenv.get('SUPABASE_URL'),
       anonKey: dotenv.get('SUPABASE_ANON_KEY'),
@@ -33,30 +35,34 @@ void main() async {
       DeviceOrientation.portraitDown,
     ]);
 
-    runApp(const MyApp());
+    // Provider를 통해 ViewModel 제공
+    runApp(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider(create: (_) => StudyViewModel()),
+        ],
+        child: const MyApp(),
+      ),
+    );
 
-    // --- 비동기 백그라운드 작업 (랙 방지를 위해 지연 실행) ---
+    // --- 비동기 백그라운드 작업 ---
     Future.microtask(() async {
       try {
-        // 1. 로컬 데이터 로딩 (이미 로드되었다면 0.01초 만에 끝남)
         for (int i = 1; i <= 5; i++) {
           await DatabaseService.loadJsonToHive(i);
         }
         await DatabaseService.loadJsonToHive(11);
         await DatabaseService.loadJsonToHive(12);
         
-        // 2. [최적화] 서버 동기화는 앱이 완전히 켜지고 3초 뒤에 조용히 진행
         Future.delayed(const Duration(seconds: 3), () async {
           debugPrint("📡 백그라운드 서버 동기화를 시작합니다...");
           await DatabaseService.syncMasterData();
         });
-
       } catch (e) {
         debugPrint("⚠️ 백그라운드 작업 중 오류가 발생했습니다: $e");
       }
     });
   } catch (e) {
-    // 치명적 에러 시 앱이 죽지 않도록 최소한의 화면이라도 띄움
     debugPrint("❌ 앱 실행 실패: $e");
     runApp(MaterialApp(
       home: Scaffold(
@@ -84,13 +90,11 @@ class SolidPageTurnTransitionsBuilder extends PageTransitionsBuilder {
     Animation<double> secondaryAnimation,
     Widget child,
   ) {
-    // 1. 페이지 이동 애니메이션 (오른쪽 -> 왼쪽)
     final slideIn = Tween<Offset>(
       begin: const Offset(1.0, 0.0),
       end: Offset.zero,
     ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutQuart));
 
-    // 2. 나가는 페이지 애니메이션 (왼쪽으로 살짝 밀림)
     final slideOut =
         Tween<Offset>(begin: Offset.zero, end: const Offset(-0.3, 0.0)).animate(
           CurvedAnimation(
@@ -99,7 +103,6 @@ class SolidPageTurnTransitionsBuilder extends PageTransitionsBuilder {
           ),
         );
 
-    // 핵심: 이동하는 페이지(child)에 배경을 입혀서 이전 페이지를 덮어버림 (잔상 방지)
     return SlideTransition(
       position: slideIn,
       child: SlideTransition(
@@ -137,8 +140,8 @@ class MyApp extends StatelessWidget {
               seedColor: const Color(0xFF5B86E5),
               brightness: isDarkMode ? Brightness.dark : Brightness.light,
             ),
-            focusColor: Colors.transparent, // 포커스 테두리 방지
-            highlightColor: Colors.transparent, // 하이라이트 노란 선 방지
+            focusColor: Colors.transparent,
+            highlightColor: Colors.transparent,
             textTheme:
                 GoogleFonts.notoSansTextTheme(
                   isDarkMode
@@ -155,7 +158,6 @@ class MyApp extends StatelessWidget {
               elevation: 0,
               centerTitle: true,
             ),
-            // 모든 페이지 이동 시 배경을 들고 움직이는 커스텀 슬라이드 적용
             pageTransitionsTheme: PageTransitionsTheme(
               builders: {
                 TargetPlatform.android: SolidPageTurnTransitionsBuilder(
@@ -169,7 +171,6 @@ class MyApp extends StatelessWidget {
               },
             ),
           ),
-          // builder에서는 이제 배경을 씌우지 않고 내용물만 보냅니다. (전환 효과에서 배경을 처리하므로)
           builder: (context, child) {
             return child!;
           },

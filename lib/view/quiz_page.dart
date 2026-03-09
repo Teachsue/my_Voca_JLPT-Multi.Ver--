@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
@@ -5,6 +6,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import '../model/word.dart';
 import '../view_model/study_view_model.dart';
 import '../service/database_service.dart';
+import 'seasonal_background.dart';
 
 class QuizPage extends StatefulWidget {
   final String level;
@@ -24,85 +26,193 @@ class QuizPage extends StatefulWidget {
   State<QuizPage> createState() => _QuizPageState();
 }
 
-class _QuizPageState extends State<QuizPage> {
+class _QuizPageState extends State<QuizPage> with WidgetsBindingObserver {
   late StudyViewModel _viewModel;
+  bool _isInitialized = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _viewModel = StudyViewModel();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _checkAndInit());
+    
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _initQuiz();
+    });
   }
 
-  void _checkAndInit() async {
-    final String levelDigit = widget.level.replaceAll(RegExp(r'[^0-9]'), '');
-    final int levelInt = levelDigit.isEmpty ? 0 : int.parse(levelDigit);
-    if (widget.day == -1) {
-      await _viewModel.loadWords(levelInt, questionCount: widget.questionCount, day: widget.day, initialWords: widget.initialWords);
-      if (mounted) setState(() {});
-      return;
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) {
+      _saveCurrentSession();
     }
-    final savedSession = _viewModel.getSavedSession(levelInt, widget.day);
-    if (savedSession != null) {
-      if (!mounted) return;
-      final bool? resume = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-          title: const Text('이어 풀기', style: TextStyle(fontWeight: FontWeight.bold)),
-          content: Text('${widget.day != null ? "DAY ${widget.day}" : widget.level} 퀴즈 기록이 있습니다.\n이어서 푸시겠습니까?'),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('새로 시작')),
-            TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('이어 풀기', style: TextStyle(fontWeight: FontWeight.bold))),
-          ],
-        ),
-      );
-      if (resume == null) { if (mounted) Navigator.pop(context); return; }
-      if (resume == true) _viewModel.resumeSession(savedSession);
-      else await _viewModel.loadWords(levelInt, questionCount: widget.questionCount, day: widget.day, initialWords: widget.initialWords);
-    } else {
-      await _viewModel.loadWords(levelInt, questionCount: widget.questionCount, day: widget.day, initialWords: widget.initialWords);
+  }
+
+  int _safeParseLevel(String levelName) {
+    if (levelName.contains('히라가나')) return 11;
+    if (levelName.contains('가타카나')) return 12;
+    if (levelName.contains('오답')) return -2;
+    if (levelName.contains('북마크')) return -3;
+    if (levelName.contains('오늘')) return -4;
+    
+    final RegExp digitRegExp = RegExp(r'\d+');
+    final match = digitRegExp.firstMatch(levelName);
+    if (match != null) {
+      return int.tryParse(match.group(0)!) ?? 5;
     }
-    setState(() {});
+    return 5;
+  }
+
+  Future<void> _initQuiz() async {
+    final int levelInt = _safeParseLevel(widget.level);
+    final int dayInt = widget.day ?? -1;
+
+    final savedSession = _viewModel.getSavedSession(levelInt, dayInt);
+    if (savedSession != null && widget.initialWords == null) {
+      final bool? resume = await _showResumeDialog();
+      if (resume == true) {
+        await _viewModel.resumeSession(levelInt, dayInt);
+        if (mounted) setState(() => _isInitialized = true);
+        return;
+      } else {
+        await _viewModel.clearSession(levelInt, dayInt);
+      }
+    }
+
+    await _viewModel.loadWords(
+      levelInt, 
+      questionCount: widget.questionCount, 
+      day: widget.day, 
+      initialWords: widget.initialWords
+    );
+    
+    if (mounted) setState(() => _isInitialized = true);
+  }
+
+  Future<bool?> _showResumeDialog() {
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF2D3436) : Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Row(children: [Icon(Icons.history_rounded, color: Color(0xFF5B86E5)), SizedBox(width: 10), Text('이어 풀기', style: TextStyle(fontWeight: FontWeight.bold))]),
+        content: Text('${widget.day != null && widget.day != 0 ? "DAY ${widget.day}" : widget.level} 퀴즈 기록이 있습니다.\n이어서 푸시겠습니까?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('새로 시작', style: TextStyle(color: Colors.grey))),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('이어 풀기', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF5B86E5)))),
+        ],
+      ),
+    );
+  }
+
+  void _saveCurrentSession() {
+    final int levelInt = _safeParseLevel(widget.level);
+    final int dayInt = widget.day ?? -1;
+    if (!_viewModel.isFinished) {
+      _viewModel.saveSession(levelInt, dayInt);
+    }
+  }
+
+  Color _getThemePointColor(bool isDarkMode, String appTheme) {
+    int month = DateTime.now().month;
+    String target = appTheme;
+    if (target == 'auto') {
+      if (month >= 3 && month <= 5) target = 'spring';
+      else if (month >= 6 && month <= 8) target = 'summer';
+      else if (month >= 9 && month <= 11) target = 'autumn';
+      else target = 'winter';
+    }
+    if (isDarkMode) {
+      switch (target) {
+        case 'spring': return const Color(0xFFCE93D8);
+        case 'summer': return const Color(0xFF90CAF9);
+        case 'autumn': return const Color(0xFFFFCC80);
+        default: return const Color(0xFFB0BEC5);
+      }
+    }
+    switch (target) {
+      case 'spring': return Colors.pinkAccent;
+      case 'summer': return Colors.blueAccent;
+      case 'autumn': return Colors.orangeAccent;
+      default: return Colors.blueGrey;
+    }
+  }
+
+  String _getLevelText(int level) {
+    if (level <= 5) return 'N$level';
+    if (level == 11) return '기초1';
+    if (level == 12) return '기초2';
+    return '-';
   }
 
   @override
   Widget build(BuildContext context) {
     final bool isDarkMode = Theme.of(context).brightness == Brightness.dark;
-    final Color textColor = isDarkMode ? Colors.white : Colors.black87;
-    final todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
-    final bool isTodaysCompleted = Hive.box(DatabaseService.sessionBoxName).get('todays_words_completed_$todayStr', defaultValue: false);
+    final Color textColor = isDarkMode ? const Color(0xFFE0E0E0) : Colors.black87;
+    final sessionBox = Hive.box(DatabaseService.sessionBoxName);
+    final String appTheme = sessionBox.get('app_theme', defaultValue: 'auto');
+    final Color themeColor = _getThemePointColor(isDarkMode, appTheme);
 
     return ChangeNotifierProvider.value(
       value: _viewModel,
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        appBar: AppBar(
-          title: Text(
-            widget.day == 0 ? (isTodaysCompleted ? '오늘의 단어 복습 퀴즈' : '오늘의 단어 퀴즈') : (widget.day != null ? '${widget.level} DAY ${widget.day} 퀴즈' : '${widget.level} 퀴즈'),
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: textColor),
-          ),
+      child: SeasonalBackground(
+        isDarkMode: isDarkMode,
+        appTheme: appTheme,
+        child: Scaffold(
           backgroundColor: Colors.transparent,
-          foregroundColor: textColor,
-          elevation: 0,
-          centerTitle: true,
-        ),
-        body: Consumer<StudyViewModel>(
-          builder: (context, viewModel, child) {
-            if (viewModel.total == 0) return const Center(child: CircularProgressIndicator(color: Color(0xFF5B86E5)));
-            if (viewModel.isFinished) {
-              // [최적화] 퀴즈 종료 시 한 번만 서버 동기화 호출
-              Future.microtask(() => viewModel.syncProgressToServer());
-              return _buildResultView(viewModel, isDarkMode);
-            }
-            return _buildQuizView(context, viewModel, isDarkMode);
-          },
+          appBar: AppBar(
+            title: Text(widget.level, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: textColor)),
+            backgroundColor: Colors.transparent,
+            foregroundColor: textColor,
+            elevation: 0,
+            leading: IconButton(
+              icon: const Icon(Icons.close_rounded),
+              onPressed: () {
+                _saveCurrentSession();
+                Navigator.pop(context);
+              },
+            ),
+            actions: [
+              Consumer<StudyViewModel>(
+                builder: (_, vm, __) {
+                  final displayIdx = (vm.currentIndex + 1).clamp(1, vm.total > 0 ? vm.total : 1);
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 20),
+                    child: Center(child: Text('$displayIdx / ${vm.total}', style: TextStyle(color: textColor.withOpacity(0.5), fontWeight: FontWeight.w800))),
+                  );
+                },
+              )
+            ],
+          ),
+          body: Consumer<StudyViewModel>(
+            builder: (context, viewModel, child) {
+              if (!_isInitialized || (viewModel.total == 0 && !viewModel.isFinished)) {
+                return const Center(child: CircularProgressIndicator(color: Color(0xFF5B86E5)));
+              }
+              if (viewModel.isFinished) {
+                if (widget.day == 0 && viewModel.score == viewModel.total) {
+                  final todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
+                  Hive.box(DatabaseService.sessionBoxName).put('todays_words_completed_$todayStr', true);
+                }
+                Future.microtask(() => viewModel.syncProgressToServer());
+                return _buildResultView(viewModel, isDarkMode, themeColor);
+              }
+              return _buildQuizView(context, viewModel, isDarkMode, textColor, themeColor);
+            },
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildResultView(StudyViewModel viewModel, bool isDarkMode) {
+  Widget _buildResultView(StudyViewModel viewModel, bool isDarkMode, Color themeColor) {
     final bool isPerfect = viewModel.score == viewModel.total;
     final Color textColor = isDarkMode ? Colors.white : Colors.black87;
 
@@ -110,17 +220,52 @@ class _QuizPageState extends State<QuizPage> {
       children: [
         Expanded(
           child: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(),
             padding: const EdgeInsets.all(24.0),
             child: Column(
               children: [
-                Icon(isPerfect ? Icons.workspace_premium_rounded : Icons.fitness_center_rounded, size: 80, color: isPerfect ? Colors.orange : Colors.blueGrey),
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: isPerfect 
+                        ? [Colors.orange.withOpacity(0.2), Colors.orange.withOpacity(0.05)] 
+                        : [themeColor.withOpacity(0.2), themeColor.withOpacity(0.05)],
+                      begin: Alignment.topLeft, end: Alignment.bottomRight
+                    ),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(isPerfect ? Icons.workspace_premium_rounded : Icons.auto_awesome_rounded, 
+                       size: 60, color: isPerfect ? Colors.orange : themeColor),
+                ),
                 const SizedBox(height: 20),
-                Text(isPerfect ? '완벽합니다! 💯' : '아쉬워요! 조금만 더 힘내세요 💪', textAlign: TextAlign.center, style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: textColor)),
-                const SizedBox(height: 12),
-                RichText(text: TextSpan(style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: isDarkMode ? Colors.white38 : Colors.grey), children: [TextSpan(text: '${viewModel.score}', style: const TextStyle(color: Colors.redAccent)), TextSpan(text: ' / ${viewModel.total}')])),
-                const SizedBox(height: 35),
+                Text(isPerfect ? '완벽합니다! 💯' : '조금 더 힘내볼까요? 💪', 
+                     textAlign: TextAlign.center, style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: textColor)),
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: isDarkMode ? Colors.white.withOpacity(0.05) : Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: isDarkMode ? [] : [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10)],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('${viewModel.score}', style: TextStyle(color: themeColor, fontSize: 32, fontWeight: FontWeight.w900)),
+                      Text(' / ${viewModel.total}', style: TextStyle(color: isDarkMode ? Colors.white24 : Colors.grey[400], fontSize: 22, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 36),
+                
                 if (!isPerfect) ...[
-                  Row(children: [Icon(Icons.menu_book_rounded, color: isDarkMode ? Colors.white70 : Colors.blueGrey, size: 20), const SizedBox(width: 8), Text('틀린 단어 확인', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: textColor))]),
+                  Row(children: [
+                    Container(width: 4, height: 18, decoration: BoxDecoration(color: themeColor, borderRadius: BorderRadius.circular(2))),
+                    const SizedBox(width: 10), 
+                    Text('틀린 단어 꼼꼼하게 복습', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: textColor))
+                  ]),
                   const SizedBox(height: 16),
                   ...List.generate(viewModel.sessionWords.length, (index) {
                     final word = viewModel.sessionWords[index];
@@ -128,9 +273,58 @@ class _QuizPageState extends State<QuizPage> {
                     if (userAnswer == word.meaning || userAnswer == word.kanji || userAnswer == word.kana) return const SizedBox.shrink();
                     return Container(
                       margin: const EdgeInsets.only(bottom: 12),
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(color: isDarkMode ? Colors.white.withOpacity(0.1) : Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.redAccent.withOpacity(0.2))),
-                      child: Row(children: [const Icon(Icons.cancel_rounded, color: Colors.redAccent, size: 22), const SizedBox(width: 12), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('${word.kanji} (${word.kana})', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: textColor)), const SizedBox(height: 6), Text('$userAnswer -> ${word.meaning}', style: const TextStyle(fontSize: 14, color: Colors.redAccent, fontWeight: FontWeight.bold))]))]),
+                      padding: const EdgeInsets.all(18),
+                      decoration: BoxDecoration(
+                        color: isDarkMode ? const Color(0xFF252525) : Colors.white, 
+                        borderRadius: BorderRadius.circular(20), 
+                        border: Border.all(color: Colors.redAccent.withOpacity(isDarkMode ? 0.1 : 0.05)),
+                        boxShadow: isDarkMode ? [] : [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 8)],
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(color: Colors.redAccent.withOpacity(0.1), shape: BoxShape.circle),
+                            child: const Icon(Icons.close_rounded, color: Colors.redAccent, size: 18),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start, 
+                              children: [
+                                Row(
+                                  children: [
+                                    // 결과 리스트에 레벨 배지 추가
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(color: themeColor.withOpacity(0.1), borderRadius: BorderRadius.circular(4)),
+                                      child: Text(_getLevelText(word.level), style: TextStyle(color: themeColor, fontSize: 10, fontWeight: FontWeight.w900)),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text('${word.kanji} (${word.kana})', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: textColor)),
+                                  ],
+                                ), 
+                                const SizedBox(height: 8), 
+                                Wrap(
+                                  spacing: 12,
+                                  runSpacing: 4,
+                                  children: [
+                                    RichText(text: TextSpan(children: [
+                                      TextSpan(text: '내 답: ', style: TextStyle(fontSize: 13, color: isDarkMode ? Colors.white24 : Colors.grey[500])),
+                                      TextSpan(text: userAnswer ?? '없음', style: const TextStyle(fontSize: 13, color: Colors.redAccent, fontWeight: FontWeight.w600)),
+                                    ])),
+                                    RichText(text: TextSpan(children: [
+                                      TextSpan(text: '정답: ', style: TextStyle(fontSize: 13, color: isDarkMode ? Colors.white24 : Colors.grey[500])),
+                                      TextSpan(text: word.meaning, style: TextStyle(fontSize: 13, color: themeColor, fontWeight: FontWeight.bold)),
+                                    ])),
+                                  ],
+                                ),
+                              ]
+                            )
+                          )
+                        ]
+                      ),
                     );
                   }),
                 ],
@@ -138,64 +332,57 @@ class _QuizPageState extends State<QuizPage> {
             ),
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(24, 10, 24, 30),
-          child: isPerfect
-              ? SizedBox(
-                  width: double.infinity,
-                  height: 55,
-                  child: ElevatedButton(
-                    onPressed: () => Navigator.of(context).popUntil((route) => route.isFirst),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF5B86E5),
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                    ),
-                    child: const Text('학습 완료', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        // 하단 버튼 영역 - 테마 색상 완벽 적용
+        Container(
+          padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+          decoration: BoxDecoration(
+            color: isDarkMode ? Colors.transparent : Colors.white.withOpacity(0.5),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: double.infinity,
+                height: 56,
+                child: ElevatedButton.icon(
+                  onPressed: () => viewModel.restart(),
+                  icon: const Icon(Icons.replay_rounded, size: 20),
+                  label: const Text('다시 도전하기', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: themeColor, // 테마 색상 적용
+                    foregroundColor: isDarkMode ? Colors.black87 : Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
                   ),
-                )
-              : Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SizedBox(
-                      width: double.infinity,
-                      height: 55,
-                      child: ElevatedButton(
-                        onPressed: () => viewModel.restart(),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.orange,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                        ),
-                        child: const Text('다시 도전하기', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 55,
-                      child: OutlinedButton(
-                        onPressed: () => Navigator.of(context).popUntil((route) => route.isFirst),
-                        style: OutlinedButton.styleFrom(
-                          side: const BorderSide(color: Color(0xFF5B86E5), width: 2),
-                          foregroundColor: const Color(0xFF5B86E5),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                        ),
-                        child: const Text('홈으로 돌아가기', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                      ),
-                    ),
-                  ],
                 ),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                height: 56,
+                child: OutlinedButton.icon(
+                  onPressed: () => Navigator.of(context).popUntil((route) => route.isFirst),
+                  icon: const Icon(Icons.home_rounded, size: 20),
+                  label: const Text('학습 마치기', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(color: themeColor.withOpacity(0.5), width: 2), // 테마 테두리 적용
+                    foregroundColor: themeColor, // 테마 글자색 적용
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ],
     );
   }
 
-  Widget _buildQuizView(BuildContext context, StudyViewModel viewModel, bool isDarkMode) {
-    final bool isLast = viewModel.currentIndex == viewModel.total - 1;
+  Widget _buildQuizView(BuildContext context, StudyViewModel viewModel, bool isDarkMode, Color textColor, Color themeColor) {
+    final bool isLast = viewModel.currentIndex == (viewModel.total - 1);
     final word = viewModel.currentWord!;
     final type = viewModel.currentQuizType!;
-    final Color textColor = isDarkMode ? Colors.white : Color(0xFF2D3142);
 
     return Column(
       children: [
@@ -203,98 +390,216 @@ class _QuizPageState extends State<QuizPage> {
           padding: const EdgeInsets.fromLTRB(24, 10, 24, 5),
           child: Column(
             children: [
-              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text('${viewModel.currentIndex + 1} / ${viewModel.total}', style: TextStyle(color: isDarkMode ? Colors.white38 : Colors.grey[600], fontSize: 13, fontWeight: FontWeight.bold)), Text('정답: ${viewModel.score}', style: const TextStyle(color: Colors.green, fontSize: 13, fontWeight: FontWeight.bold))]),
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                Text('${(viewModel.currentIndex + 1).clamp(1, viewModel.total > 0 ? viewModel.total : 1)} / ${viewModel.total}', 
+                     style: TextStyle(color: isDarkMode ? Colors.white38 : Colors.grey[600], fontSize: 13, fontWeight: FontWeight.bold)), 
+                Text('정답: ${viewModel.score}', style: const TextStyle(color: Colors.green, fontSize: 13, fontWeight: FontWeight.bold))
+              ]),
               const SizedBox(height: 6),
-              ClipRRect(borderRadius: BorderRadius.circular(8), child: LinearProgressIndicator(value: viewModel.total > 0 ? (viewModel.currentIndex + 1) / viewModel.total : 0, minHeight: 5, backgroundColor: isDarkMode ? Colors.white10 : Colors.grey[200], valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF5B86E5)))),
+              ClipRRect(borderRadius: BorderRadius.circular(8), child: LinearProgressIndicator(
+                value: viewModel.total > 0 ? (viewModel.currentIndex + 1) / viewModel.total : 0, 
+                minHeight: 5, 
+                backgroundColor: isDarkMode ? Colors.white.withOpacity(0.05) : Colors.grey[200], 
+                valueColor: AlwaysStoppedAnimation<Color>(themeColor)
+              )),
             ],
           ),
         ),
         Expanded(
           child: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(),
             padding: const EdgeInsets.symmetric(horizontal: 24.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const SizedBox(height: 10),
                 Container(
-                  constraints: const BoxConstraints(minHeight: 160), // 고정 높이 대신 최소 높이 설정
+                  constraints: const BoxConstraints(minHeight: 200),
                   alignment: Alignment.center, 
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16), // 상하 패딩 추가
-                  decoration: BoxDecoration(color: isDarkMode ? Colors.white.withOpacity(0.1) : Colors.white, borderRadius: BorderRadius.circular(20)),
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+                  decoration: BoxDecoration(
+                    color: isDarkMode ? const Color(0xFF1E1E1E) : Colors.white, 
+                    borderRadius: BorderRadius.circular(24),
+                    border: isDarkMode ? Border.all(color: Colors.white.withOpacity(0.03)) : null,
+                    boxShadow: isDarkMode ? [] : [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10)],
+                  ),
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
+                      // [추가] 퀴즈 카드 상단에 난이도 배지 표시
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(color: themeColor.withOpacity(0.1), borderRadius: BorderRadius.circular(10)),
+                        child: Text(_getLevelText(word.level), style: TextStyle(color: themeColor, fontSize: 11, fontWeight: FontWeight.w900)),
+                      ),
+                      const SizedBox(height: 16),
                       if (type == QuizType.kanjiToMeaning) ...[
-                        Text(viewModel.isAnswered ? word.kana : ' ', style: TextStyle(fontSize: 16, color: isDarkMode ? Colors.white38 : Colors.grey[500])),
+                        Visibility(
+                          maintainSize: true,
+                          maintainAnimation: true,
+                          maintainState: true,
+                          visible: viewModel.isAnswered,
+                          child: Text(word.kana, style: TextStyle(fontSize: 16, color: isDarkMode ? Colors.white38 : Colors.grey[500])),
+                        ),
                         const SizedBox(height: 4),
-                        FittedBox( // 긴 한자/카타카나 대응
+                        FittedBox(
                           fit: BoxFit.scaleDown,
-                          child: Text(word.kanji, style: TextStyle(fontSize: 44, fontWeight: FontWeight.bold, color: textColor)),
+                          child: Text(word.kanji, style: TextStyle(fontSize: 48, fontWeight: FontWeight.bold, color: textColor)),
                         ),
                         const SizedBox(height: 8),
                         Opacity(
-                          opacity: (widget.day != 0 && word.level >= 1 && word.level <= 3 && !viewModel.isAnswered) ? 0.0 : 1.0,
-                          child: Text('[ ${word.koreanPronunciation} ]', style: TextStyle(fontSize: 16, color: viewModel.isAnswered ? const Color(0xFF5B86E5) : (isDarkMode ? Colors.white24 : Colors.blueGrey.withOpacity(0.6)))),
+                          opacity: viewModel.isAnswered ? 1.0 : 0.0,
+                          child: Text('[ ${word.koreanPronunciation} ]', style: TextStyle(fontSize: 16, color: themeColor, fontWeight: FontWeight.w600)),
                         ),
                       ] else ...[
                         Text('다음 뜻에 맞는 단어는?', style: TextStyle(fontSize: 14, color: isDarkMode ? Colors.white38 : Colors.blueGrey)),
                         const SizedBox(height: 12),
-                        FittedBox( // 긴 뜻 대응
+                        FittedBox(
                           fit: BoxFit.scaleDown,
                           child: Text(word.meaning, textAlign: TextAlign.center, style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: textColor)),
                         ),
                         const SizedBox(height: 8),
-                        if (viewModel.isAnswered) 
-                          FittedBox(
+                        Visibility(
+                          maintainSize: true,
+                          maintainAnimation: true,
+                          maintainState: true,
+                          visible: viewModel.isAnswered,
+                          child: FittedBox(
                             fit: BoxFit.scaleDown,
-                            child: Text('${word.kanji} (${word.kana}) [${word.koreanPronunciation}]', style: const TextStyle(fontSize: 16, color: Color(0xFF5B86E5), fontWeight: FontWeight.w600)),
-                          )
-                        else Opacity(
-                          opacity: (widget.day != 0 && word.level >= 1 && word.level <= 3) ? 0.0 : 1.0,
-                          child: Text('[ ${word.koreanPronunciation} ]', style: TextStyle(fontSize: 14, color: isDarkMode ? Colors.white10 : Colors.blueGrey.withOpacity(0.4))),
+                            child: Text('${word.kanji} (${word.kana}) [${word.koreanPronunciation}]', style: TextStyle(fontSize: 16, color: themeColor, fontWeight: FontWeight.w600)),
+                          ),
                         ),
                       ],
                     ],
                   ),
                 ),
-                const SizedBox(height: 20),
-                ...viewModel.currentOptionWords.map((optionWord) => _buildOptionButton(viewModel, optionWord, isDarkMode)),
+                const SizedBox(height: 24),
+                ...viewModel.currentOptionWords.map((optionWord) => 
+                  _buildOptionButton(
+                    viewModel, 
+                    optionWord, 
+                    isDarkMode, 
+                    themeColor, 
+                    key: ValueKey('opt_${viewModel.currentIndex}_${optionWord.id}')
+                  )
+                ),
               ],
             ),
           ),
         ),
-        if (viewModel.isAnswered) Padding(padding: const EdgeInsets.fromLTRB(24, 0, 24, 25), child: SizedBox(width: double.infinity, height: 52, child: ElevatedButton(onPressed: viewModel.nextQuestion, style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5B86E5), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))), child: Text(isLast ? '결과 보기' : '다음 문제', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold))))),
+        if (viewModel.isAnswered) 
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 30), 
+            child: SizedBox(
+              width: double.infinity, 
+              height: 56, 
+              child: ElevatedButton(
+                onPressed: () => viewModel.nextQuestion(), 
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: isDarkMode ? themeColor.withOpacity(0.2) : const Color(0xFF2D3142), 
+                  foregroundColor: Colors.white, 
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  elevation: 0,
+                ), 
+                child: Text(isLast ? '결과 보기' : '다음 문제', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold))
+              )
+            )
+          ),
       ],
     );
   }
 
-  Widget _buildOptionButton(StudyViewModel viewModel, Word optionWord, bool isDarkMode) {
+  Widget _buildOptionButton(StudyViewModel viewModel, Word optionWord, bool isDarkMode, Color themeColor, {Key? key}) {
     final type = viewModel.currentQuizType!;
     String buttonDisplayLabel = "";
-    bool isCorrect = false;
+    bool isCorrectChoice = false;
+    
     switch (type) {
-      case QuizType.kanjiToMeaning: buttonDisplayLabel = optionWord.meaning; isCorrect = optionWord.meaning == viewModel.currentWord!.meaning; break;
-      case QuizType.meaningToKanji: buttonDisplayLabel = optionWord.kanji; isCorrect = optionWord.kanji == viewModel.currentWord!.kanji; break;
-      case QuizType.meaningToKana: buttonDisplayLabel = optionWord.kana; isCorrect = optionWord.kana == viewModel.currentWord!.kana; break;
+      case QuizType.kanjiToMeaning: 
+        buttonDisplayLabel = optionWord.meaning; 
+        isCorrectChoice = optionWord.meaning == viewModel.currentWord!.meaning; 
+        break;
+      case QuizType.meaningToKanji: 
+        buttonDisplayLabel = optionWord.kanji; 
+        isCorrectChoice = optionWord.kanji == viewModel.currentWord!.kanji; 
+        break;
+      case QuizType.meaningToKana: 
+        buttonDisplayLabel = optionWord.kana; 
+        isCorrectChoice = optionWord.kana == viewModel.currentWord!.kana; 
+        break;
     }
+    
     bool isSelected = buttonDisplayLabel == viewModel.selectedAnswer;
     bool isAnswered = viewModel.isAnswered;
-    Color backgroundColor = isDarkMode ? Colors.white.withOpacity(0.05) : Colors.white;
-    Color borderColor = isDarkMode ? Colors.white10 : Colors.grey[200]!;
-    Color textColor = isDarkMode ? Colors.white : Colors.black87;
+    
+    Color backgroundColor = isDarkMode ? const Color(0xFF252525) : Colors.white;
+    Color borderColor = isDarkMode ? Colors.white.withOpacity(0.05) : Colors.grey[200]!;
+    Color textColor = isDarkMode ? const Color(0xFFBDBDBD) : Colors.black87;
+    
     if (isAnswered) {
-      if (isCorrect) { backgroundColor = isDarkMode ? Colors.green.withOpacity(0.2) : Colors.green[50]!; borderColor = Colors.green; textColor = isDarkMode ? Colors.greenAccent : Colors.green[700]!; }
-      else if (isSelected) { backgroundColor = isDarkMode ? Colors.red.withOpacity(0.2) : Colors.red[50]!; borderColor = Colors.red; textColor = isDarkMode ? Colors.redAccent : Colors.red[700]!; }
-      else textColor = isDarkMode ? Colors.white24 : Colors.grey[400]!;
+      if (isCorrectChoice) { 
+        backgroundColor = Colors.green.withOpacity(isDarkMode ? 0.15 : 0.08); 
+        borderColor = Colors.green.withOpacity(0.6); 
+        textColor = isDarkMode ? Colors.greenAccent : Colors.green[700]!; 
+      } else if (isSelected) { 
+        backgroundColor = Colors.red.withOpacity(isDarkMode ? 0.15 : 0.08); 
+        borderColor = Colors.red.withOpacity(0.6); 
+        textColor = isDarkMode ? Colors.redAccent : Colors.red[700]!; 
+      } else {
+        textColor = isDarkMode ? Colors.white10 : Colors.grey[300]!;
+      }
     }
+
     return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: SizedBox(
-        height: 72,
-        child: OutlinedButton(
-          onPressed: isAnswered ? null : () => viewModel.submitAnswer(buttonDisplayLabel),
-          style: OutlinedButton.styleFrom(backgroundColor: backgroundColor, side: BorderSide(color: borderColor, width: 2), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), padding: const EdgeInsets.symmetric(horizontal: 16)),
-          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Text(buttonDisplayLabel, textAlign: TextAlign.center, style: TextStyle(fontSize: 16, fontWeight: (isAnswered && isCorrect) ? FontWeight.bold : FontWeight.w500, color: textColor)), const SizedBox(height: 2), Opacity(opacity: isAnswered ? 1.0 : 0.0, child: Text(type == QuizType.kanjiToMeaning ? '${optionWord.kanji} (${optionWord.kana})' : optionWord.koreanPronunciation, style: TextStyle(fontSize: 11, color: textColor.withOpacity(0.5)), maxLines: 1, overflow: TextOverflow.ellipsis))]),
+      key: key,
+      padding: const EdgeInsets.only(bottom: 12),
+      child: GestureDetector(
+        onTap: () {
+          if (!isAnswered) {
+            viewModel.submitAnswer(buttonDisplayLabel);
+          }
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          height: 85,
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
+          decoration: BoxDecoration(
+            color: backgroundColor,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: borderColor, width: 2),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(buttonDisplayLabel, style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: textColor), maxLines: 1, overflow: TextOverflow.ellipsis),
+                    Visibility(
+                      maintainSize: true,
+                      maintainAnimation: true,
+                      maintainState: true,
+                      visible: isAnswered,
+                      child: Column(
+                        children: [
+                          const SizedBox(height: 4),
+                          Text(
+                            type == QuizType.kanjiToMeaning ? '${optionWord.kanji} (${optionWord.kana})' : optionWord.koreanPronunciation,
+                            style: TextStyle(fontSize: 12, color: textColor.withOpacity(0.5)),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (isAnswered && isCorrectChoice) const Icon(Icons.check_circle_rounded, color: Colors.green, size: 24),
+              if (isSelected && !isCorrectChoice) const Icon(Icons.cancel_rounded, color: Colors.red, size: 24),
+            ],
+          ),
         ),
       ),
     );
