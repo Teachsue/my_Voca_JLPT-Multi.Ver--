@@ -63,5 +63,10 @@ DEVELOPMENT_PRINCIPLES_UTF8.txt
 # Environment variables
 .env
 
+# Android Keystore and keys
+*.jks
+*.keystore
+android/key.properties
+
 # Project logs
 PROGRESS.md
