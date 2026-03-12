@@ -39,6 +39,22 @@ class SupabaseService {
     try {
       return await request();
     } catch (e) {
+      // JWT 만료 에러 (PGRST303) 또는 인증 에러 감지
+      final isJwtExpired = (e is PostgrestException && (e.code == 'PGRST303' || e.message.contains('JWT expired')));
+      
+      if (isJwtExpired) {
+        debugPrint("🔄 JWT 만료 감지, 세션 갱신 후 재시도 중...");
+        try {
+          final response = await _client.auth.refreshSession();
+          if (response.session != null) {
+            debugPrint("✅ 세션 갱신 성공, 원래 요청을 재시도합니다.");
+            return await request(); // 세션 갱신 후 1회 재시도
+          }
+        } catch (refreshError) {
+          debugPrint("❌ 세션 갱신 실패: $refreshError");
+        }
+      }
+      
       debugPrint("❌ Supabase 에러: $e");
       return null;
     }
