@@ -1,6 +1,7 @@
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/services.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart';
 import '../model/word.dart';
@@ -157,8 +158,10 @@ class StudyViewModel extends ChangeNotifier {
 
     if (isCorrect) {
       score++;
+      HapticFeedback.lightImpact(); // [추가] 정답 시 가벼운 진동
       await _updateWordSRS(word, true);
     } else {
+      HapticFeedback.mediumImpact(); // [추가] 오답 시 중간 진동
       await _updateWordSRS(word, false);
     }
     

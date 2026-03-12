@@ -94,13 +94,32 @@ class _BookmarkPageState extends State<BookmarkPage> {
 
                 if (bookmarkedWords.isEmpty) {
                   return Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.star_outline_rounded, size: 64, color: isDarkMode ? Colors.white10 : Colors.grey[300]),
-                        const SizedBox(height: 16),
-                        Text('북마크한 단어가 없습니다.', style: TextStyle(fontSize: 17, color: subTextColor)),
-                      ],
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 40),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(24),
+                            decoration: BoxDecoration(
+                              color: themeColor.withOpacity(0.05),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(Icons.star_rounded, size: 60, color: themeColor.withOpacity(0.3)),
+                          ),
+                          const SizedBox(height: 24),
+                          Text(
+                            '북마크한 단어가 없어요 🐾',
+                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: textColor),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            '학습 중에 별 아이콘을 눌러서\n기억하고 싶은 단어를 추가해 보세요!',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(fontSize: 14, color: subTextColor, height: 1.5),
+                          ),
+                        ],
+                      ),
                     ),
                   );
                 }

@@ -102,13 +102,32 @@ class _WrongAnswerPageState extends State<WrongAnswerPage> {
 
                 if (wrongWords.isEmpty) {
                   return Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.assignment_turned_in_rounded, size: 64, color: isDarkMode ? Colors.white10 : Colors.grey[300]),
-                        const SizedBox(height: 16),
-                        Text('오답노트가 비어있습니다!', textAlign: TextAlign.center, style: TextStyle(fontSize: 17, color: subTextColor)),
-                      ],
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 40),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(24),
+                            decoration: BoxDecoration(
+                              color: themeColor.withOpacity(0.05),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(Icons.check_circle_rounded, size: 60, color: themeColor.withOpacity(0.3)),
+                          ),
+                          const SizedBox(height: 24),
+                          Text(
+                            '오답노트가 깨끗해요! ✨',
+                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: textColor),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            '틀린 단어가 하나도 없네요.\n정말 대단해요! 이 기세를 이어가 볼까요?',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(fontSize: 14, color: subTextColor, height: 1.5),
+                          ),
+                        ],
+                      ),
                     ),
                   );
                 }
