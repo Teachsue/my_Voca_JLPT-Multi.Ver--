@@ -60,6 +60,27 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
 
   Future<void> _calculateStats() async {
     if (_isCalculating) return;
+    
+    final sessionBox = Hive.box(DatabaseService.sessionBoxName);
+    final cachedProgress = sessionBox.get('cached_stat_progress');
+    final cachedReview = sessionBox.get('cached_stat_review');
+    final lastCalcTime = sessionBox.get('last_stat_calc_time');
+    
+    // 마지막 계산 후 1분 이내라면 캐시 사용 (성능 최적화)
+    if (lastCalcTime != null) {
+      final diff = DateTime.now().difference(DateTime.tryParse(lastCalcTime) ?? DateTime(2000));
+      if (diff.inMinutes < 1 && cachedProgress != null && cachedReview != null) {
+        if (mounted) {
+          setState(() {
+            _progress = cachedProgress;
+            _reviewWords = cachedReview;
+            _isCalculating = false;
+          });
+        }
+        return;
+      }
+    }
+
     if (mounted) setState(() => _isCalculating = true);
     
     final wBox = Hive.box<Word>(DatabaseService.boxName);
@@ -69,24 +90,33 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
       }
       return;
     }
+
+    // 계산 로직 (비차단 방식으로 개선)
+    await Future.delayed(const Duration(milliseconds: 100)); // UI 렌더링 우선 보장
     
     final Map<int, int> wordCorrectMap = {};
     int wrongCount = 0;
-    for (var i = 0; i < wBox.length; i++) {
-      final word = wBox.getAt(i);
-      if (word != null) {
-        if (!wordCorrectMap.containsKey(word.id) || word.correct_count > wordCorrectMap[word.id]!) {
-          wordCorrectMap[word.id] = word.correct_count;
-        }
-        if (word.is_wrong_note) wrongCount++;
+    
+    // 맵 생성을 통한 고속 순회
+    final allWords = wBox.values.toList();
+    for (var word in allWords) {
+      if (!wordCorrectMap.containsKey(word.id) || word.correct_count > wordCorrectMap[word.id]!) {
+        wordCorrectMap[word.id] = word.correct_count;
       }
-      if (i % 500 == 0) await Future.delayed(Duration.zero);
+      if (word.is_wrong_note) wrongCount++;
     }
     
     final learnedCount = wordCorrectMap.values.where((c) => c > 0).length;
+    final totalProgress = wordCorrectMap.isEmpty ? 0.0 : (learnedCount / wordCorrectMap.length) * 100;
+
+    // 캐시 저장
+    await sessionBox.put('cached_stat_progress', totalProgress);
+    await sessionBox.put('cached_stat_review', wrongCount);
+    await sessionBox.put('last_stat_calc_time', DateTime.now().toIso8601String());
+
     if (mounted) {
       setState(() { 
-        _progress = wordCorrectMap.isEmpty ? 0.0 : (learnedCount / wordCorrectMap.length) * 100; 
+        _progress = totalProgress;
         _reviewWords = wrongCount; 
         _isCalculating = false; 
       });

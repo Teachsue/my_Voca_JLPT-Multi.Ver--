@@ -14,9 +14,9 @@ import 'view_model/study_view_model.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 void main() async {
-  try {
-    WidgetsFlutterBinding.ensureInitialized();
-    
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  Future<void> initializeApp() async {
     // .env 파일 로드
     await dotenv.load(fileName: ".env");
     
@@ -62,13 +62,89 @@ void main() async {
         debugPrint("⚠️ 백그라운드 작업 중 오류가 발생했습니다: $e");
       }
     });
+  }
+
+  try {
+    await initializeApp();
   } catch (e) {
     debugPrint("❌ 앱 실행 실패: $e");
     runApp(MaterialApp(
-      home: Scaffold(
-        body: Center(child: Text("앱 실행 중 오류가 발생했습니다.\n네트워크 연결을 확인해주세요.\n\n$e")),
+      debugShowCheckedModeBanner: false,
+      home: InitializationErrorPage(
+        error: e.toString(),
+        onRetry: () => main(),
       ),
     ));
+  }
+}
+
+class InitializationErrorPage extends StatelessWidget {
+  final String error;
+  final VoidCallback onRetry;
+
+  const InitializationErrorPage({
+    super.key,
+    required this.error,
+    required this.onRetry,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Container(
+        padding: const EdgeInsets.all(32),
+        width: double.infinity,
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFF5B86E5), Color(0xFF36D1DC)],
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.wifi_off_rounded, size: 80, color: Colors.white),
+            const SizedBox(height: 24),
+            const Text(
+              '연결에 실패했습니다',
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              '인터넷 연결을 확인하고 다시 시도해 주세요.\n서버 점검 중일 수도 있습니다.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 16, color: Colors.white70, height: 1.5),
+            ),
+            const SizedBox(height: 40),
+            SizedBox(
+              width: 200,
+              height: 52,
+              child: ElevatedButton(
+                onPressed: onRetry,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: const Color(0xFF5B86E5),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  elevation: 0,
+                ),
+                child: const Text('다시 시도하기', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              ),
+            ),
+            const SizedBox(height: 20),
+            TextButton(
+              onPressed: () {
+                // 에러 상세 보기 토글 등 (선택 사항)
+              },
+              child: Text(
+                '에러 상세 보기: ${error.length > 50 ? error.substring(0, 50) + '...' : error}',
+                style: const TextStyle(fontSize: 12, color: Colors.white54),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
