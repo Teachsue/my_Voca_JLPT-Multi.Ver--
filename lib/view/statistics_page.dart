@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../model/word.dart';
 import '../service/database_service.dart';
 import '../service/supabase_service.dart';
@@ -222,6 +223,15 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
                   _buildSectionTitle('데이터 관리', textColor),
                   const SizedBox(height: 12),
                   _buildDataManagementSection(context, isDarkMode, sBox),
+                  const SizedBox(height: 32),
+                  _buildSectionTitle('법적 정책 및 정보', textColor),
+                  const SizedBox(height: 12),
+                  _buildLegalSection(context, isDarkMode),
+                  const SizedBox(height: 40),
+                  Center(
+                    child: Text('버전 1.0.0', style: TextStyle(fontSize: 12, color: subTextColor)),
+                  ),
+                  const SizedBox(height: 20),
                 ],
               ),
             ),
@@ -406,6 +416,73 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
     );
   }
 
+  Widget _buildLegalSection(BuildContext context, bool isDarkMode) {
+    return Column(
+      children: [
+        _buildManagementCard(context, title: '개인정보 처리방침', subtitle: '수집하는 데이터 및 이용 약관 확인', icon: Icons.policy_rounded, isDarkMode: isDarkMode, onTap: () => _showPrivacyPolicyDialog(isDarkMode)),
+        const SizedBox(height: 12),
+        if (SupabaseService.isGoogleLinked)
+          _buildManagementCard(context, title: '계정 탈퇴', subtitle: '클라우드 데이터를 포함한 모든 정보 삭제', icon: Icons.person_remove_rounded, color: Colors.redAccent, isDarkMode: isDarkMode, onTap: () => _showResetDialog(context, '계정 탈퇴', '정말 계정을 탈퇴하시겠습니까?\n서버에 저장된 모든 학습 데이터와 인증 계정이 즉시 삭제되며 복구할 수 없습니다.', () async {
+            if (!mounted) return;
+            showDialog(context: context, barrierDismissible: false, builder: (context) => const Center(child: CircularProgressIndicator(color: Color(0xFF5B86E5))));
+            try {
+              await SupabaseService.deleteAccount();
+            } finally {
+              if (context.mounted) Navigator.of(context).pop();
+              if (mounted) {
+                _calculateStats();
+                _loadUserProfile();
+              }
+            }
+          })),
+      ],
+    );
+  }
+
+  void _showPrivacyPolicyDialog(bool isDarkMode) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: isDarkMode ? const Color(0xFF2D3436) : Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Text('개인정보 처리방침', style: TextStyle(fontWeight: FontWeight.bold)),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('최종 수정일: 2026년 3월 12일\n', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                _buildPolicyText('1. 수집하는 개인정보 항목', '냥냥 일본어는 구글 로그인을 통해 사용자의 이메일 주소, 이름, 프로필 사진 및 학습 진도 데이터를 수집합니다.'),
+                _buildPolicyText('2. 개인정보의 수집 및 이용 목적', '수집된 정보는 사용자의 학습 기록을 여러 기기 간에 동기화하고, 개인화된 학습 서비스를 제공하는 목적으로만 사용됩니다.'),
+                _buildPolicyText('3. 개인정보의 보관 및 파기', '사용자의 데이터는 계정 탈퇴 시까지 보관되며, 탈퇴 즉시 서버에서 영구적으로 삭제됩니다. 로컬 기기의 데이터는 앱 삭제 시 함께 삭제됩니다.'),
+                _buildPolicyText('4. 제3자 제공 및 위탁', '사용자의 개인정보를 외부 제3자에게 판매하거나 제공하지 않습니다. 데이터 저장을 위해 Supabase 및 Google 인프라를 사용합니다.'),
+                _buildPolicyText('5. 사용자의 권리', '사용자는 언제든지 앱 내 설정 메뉴를 통해 자신의 데이터를 확인하거나 삭제(계정 탈퇴)할 권리가 있습니다.'),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('닫기', style: TextStyle(fontWeight: FontWeight.bold))),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPolicyText(String title, String content) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+          const SizedBox(height: 4),
+          Text(content, style: const TextStyle(fontSize: 13, height: 1.5)),
+        ],
+      ),
+    );
+  }
+
   Widget _buildManagementCard(BuildContext context, {required String title, required String subtitle, required IconData icon, Color? color, required bool isDarkMode, required VoidCallback onTap}) {
     Color textColor = color ?? (isDarkMode ? Colors.white : Colors.black87);
     return GestureDetector(
@@ -449,7 +526,7 @@ class _StatisticsPageState extends State<StatisticsPage> with WidgetsBindingObse
                 ScaffoldMessenger.of(this.context).showSnackBar(SnackBar(content: Text('✅ $title 처리가 완료되었습니다.'), behavior: SnackBarBehavior.floating, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))));
               }
             }, 
-            style: ElevatedButton.styleFrom(backgroundColor: title.contains('삭제') || title.contains('초기화') ? Colors.redAccent : const Color(0xFF5B86E5), foregroundColor: Colors.white, elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))), 
+            style: ElevatedButton.styleFrom(backgroundColor: title.contains('삭제') || title.contains('초기화') || title.contains('탈퇴') ? Colors.redAccent : const Color(0xFF5B86E5), foregroundColor: Colors.white, elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))), 
             child: const Text('확인', style: TextStyle(fontWeight: FontWeight.bold))
           ),
         ],

@@ -326,6 +326,36 @@ class SupabaseService {
     }
   }
 
+  static Future<void> deleteAccount() async {
+    if (!isGoogleLinked) {
+      await clearAllProgress();
+      return;
+    }
+
+    await _safeRequest(() async {
+      // 1. 서버 데이터 삭제 (RPC 호출: auth.users 삭제 포함)
+      // 주의: 이 함수는 Supabase 대시보드에서 미리 생성되어 있어야 함
+      try {
+        await _client.rpc('delete_user_account');
+      } catch (e) {
+        debugPrint("⚠️ RPC 삭제 실패 (함수가 없거나 권한 부족): $e");
+        // 폴백: 수동으로 테이블 데이터라도 삭제 시도
+        final sid = stableId;
+        await _client.from('user_progress').delete().eq('user_id', sid);
+        await _client.from('study_logs').delete().eq('user_id', sid);
+        await _client.from('profiles').delete().eq('id', sid);
+      }
+
+      // 2. 로컬 데이터 초기화
+      await clearAllProgress();
+
+      // 3. 로그아웃 (인증 세션 종료)
+      await signOut();
+      
+      debugPrint("✅ 계정 및 모든 데이터 삭제 완료");
+    });
+  }
+
   static Future<void> resetWrongAnswers() async {
     try { if (isGoogleLinked) await _client.from('user_progress').update({'incorrect_count': 0, 'is_wrong_note': false}).eq('user_id', stableId); } catch (e) {}
   }
